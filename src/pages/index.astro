@@ -1,0 +1,156 @@
+---
+/**
+ * The owner's home: every customer of every product, who needs chasing, and
+ * what the subscriptions bring in, in total and per product.
+ */
+import Icon from '../components/Icon.astro';
+import Owner from '../layouts/Owner.astro';
+import { getIncomeByProduct, listAccounts, monthlyValue, stateLabels, stateTone, subscriptionState, type SubscriptionState } from '../lib/platform';
+import { loadProducts } from '../lib/products';
+import { formatShortDay, nowIn } from '../lib/time';
+
+const today = nowIn('Africa/Cairo').day;
+const { products, productList, reachable } = await loadProducts();
+const search = (Astro.url.searchParams.get('q') ?? '').trim().slice(0, 60);
+const stateFilter = Astro.url.searchParams.get('state') ?? '';
+const productFilter = Astro.url.searchParams.get('product') ?? '';
+
+const [accounts, income] = await Promise.all([listAccounts(search), getIncomeByProduct(`${today.slice(0, 8)}01`)]);
+const rows = accounts.map((account) => ({ account, state: subscriptionState(account, today) }));
+
+const inProduct = productFilter ? rows.filter((row) => row.account.product === productFilter) : rows;
+const countOf = (state: SubscriptionState) => inProduct.filter((row) => row.state === state).length;
+const shown = stateFilter ? inProduct.filter((row) => row.state === stateFilter) : inProduct;
+
+const incomeTotal = [...income.values()].reduce((sum, amount) => sum + amount, 0);
+const shownIncome = productFilter ? (income.get(productFilter) ?? 0) : incomeTotal;
+const working = countOf('active') + countOf('trial') + countOf('expiring');
+
+const states: SubscriptionState[] = ['active', 'trial', 'expiring', 'expired', 'suspended'];
+/** A link to this page that keeps the other filters. */
+const link = (changes: { state?: string; product?: string }) => {
+  const params = { q: search, product: productFilter, state: stateFilter, ...changes };
+  const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value));
+  return `/${query.size ? `?${query}` : ''}`;
+};
+---
+
+<Owner title="العملاء" subtitle={`${accounts.length} عميل على ${productList.length === 1 ? 'منتج واحد' : `${productList.length} منتجات`}`}>
+  <a slot="actions" class="btn btn--primary" href="/accounts/new"><Icon name="plus" />عميل جديد</a>
+
+  {
+    !reachable && (
+      <p class="notice notice--error" role="alert">
+        <Icon name="ban" />
+        المنصة مش بترد دلوقتي، فأسماء المنتجات وإضافة عميل جديد مش متاحين. الاشتراكات والدفعات شغّالة عادي.
+      </p>
+    )
+  }
+
+  <div class="stats">
+    <p class="stat"><span class="stat__icon" data-tone="ok"><Icon name="check" /></span><span><strong>{working}</strong><span>عميل شغّال</span></span></p>
+    <p class="stat"><span class="stat__icon" data-tone="warn"><Icon name="hourglass" /></span><span><strong>{countOf('expiring')}</strong><span>ينتهي خلال أسبوع</span></span></p>
+    <p class="stat"><span class="stat__icon" data-tone="bad"><Icon name="ban" /></span><span><strong>{countOf('expired') + countOf('suspended')}</strong><span>منتهي أو موقوف</span></span></p>
+    <p class="stat"><span class="stat__icon"><Icon name="chart" /></span><span><strong>{monthlyValue(inProduct.map((row) => row.account))}</strong><span>قيمة الاشتراكات شهرياً (ج)</span></span></p>
+    <p class="stat"><span class="stat__icon"><Icon name="wallet" /></span><span><strong>{shownIncome}</strong><span>المحصّل الشهر ده (ج)</span></span></p>
+  </div>
+
+  <section class="card" aria-labelledby="products-title">
+    <div class="card__head">
+      <h2 id="products-title" class="card__title"><Icon name="building" />المنتجات</h2>
+      {productFilter && <a class="btn btn--sm btn--ghost" href={link({ product: '' })}>كل المنتجات</a>}
+    </div>
+    <div class="table-wrap">
+      <table class="cards-on-phone">
+        <thead>
+          <tr>
+            <th>المنتج</th>
+            <th>العملاء</th>
+            <th>شغّالين</th>
+            <th>قيمة شهرية</th>
+            <th>محصّل الشهر ده</th>
+          </tr>
+        </thead>
+        <tbody>
+          {
+            productList.map((product) => {
+              const own = rows.filter((row) => row.account.product === product.key);
+              const ownWorking = own.filter((row) => row.state === 'active' || row.state === 'trial' || row.state === 'expiring').length;
+              return (
+                <tr>
+                  <td>
+                    <a class="person" href={link({ product: product.key })} aria-current={productFilter === product.key ? 'true' : undefined}>
+                      <span class="avatar avatar--sm"><Icon name={product.icon} /></span>
+                      {product.customers}
+                    </a>
+                  </td>
+                  <td data-label="العملاء">{own.length}</td>
+                  <td data-label="شغّالين">{ownWorking}</td>
+                  <td data-label="قيمة شهرية">{monthlyValue(own.map((row) => row.account))} ج</td>
+                  <td data-label="محصّل الشهر ده">{income.get(product.key) ?? 0} ج</td>
+                </tr>
+              );
+            })
+          }
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <form class="row" method="get" role="search">
+    {stateFilter && <input type="hidden" name="state" value={stateFilter} />}
+    {productFilter && <input type="hidden" name="product" value={productFilter} />}
+    <input class="grow" name="q" type="search" value={search} placeholder="ابحث باسم العميل أو المسؤول أو اللينك" aria-label="بحث في العملاء" />
+    <button class="btn" type="submit">بحث</button>
+  </form>
+
+  <nav class="row" aria-label="تصفية العملاء بالحالة">
+    <a class:list={['btn', 'btn--sm', { 'btn--primary': stateFilter === '' }]} href={link({ state: '' })}>الكل ({inProduct.length})</a>
+    {
+      states.map((state) => (
+        <a class:list={['btn', 'btn--sm', { 'btn--primary': stateFilter === state }]} href={link({ state })}>
+          {stateLabels[state]} ({countOf(state)})
+        </a>
+      ))
+    }
+  </nav>
+
+  {
+    shown.length === 0 ? (
+      <p class="card muted">{accounts.length === 0 ? 'لسه مفيش عملاء. ضيف أول عميل.' : 'مفيش عملاء بالشروط دي.'}</p>
+    ) : (
+      <div class="card table-wrap">
+        <table class="cards-on-phone">
+          <thead>
+            <tr>
+              <th>العميل</th>
+              <th>المنتج</th>
+              <th>الحالة</th>
+              <th>الخطة</th>
+              <th>ساري لحد</th>
+            </tr>
+          </thead>
+          <tbody>
+            {shown.map(({ account, state }) => (
+              <tr>
+                <td>
+                  <a class="person" href={`/accounts/${account.id}`}>
+                    <span class="avatar avatar--sm" aria-hidden="true">{account.name.charAt(0)}</span>
+                    <span>
+                      {account.name}
+                      <small class="block muted">{account.contact_name || `/${account.slug}`}</small>
+                    </span>
+                  </a>
+                </td>
+                <td data-label="المنتج">{products[account.product]?.customer ?? account.product}</td>
+                <td data-label="الحالة"><span class="badge" data-status={stateTone[state]}>{stateLabels[state]}</span></td>
+                <td data-label="الخطة">{account.plan_name ? `${account.plan_name} · ${account.price} ج` : 'من غير خطة'}</td>
+                <td data-label="ساري لحد">{account.paid_until ? formatShortDay(account.paid_until) : '·'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )
+  }
+</Owner>

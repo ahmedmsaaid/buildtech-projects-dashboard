@@ -1,0 +1,86 @@
+---
+/**
+ * The catalogue of plans, per product. A customer's price is copied from its
+ * plan when the plan is chosen, so changing a plan here affects new choices
+ * only and never surprises a customer who already agreed a price.
+ */
+import Icon from '../components/Icon.astro';
+import Owner from '../layouts/Owner.astro';
+import { recordEvent } from '../lib/events';
+import { listPlans, savePlan } from '../lib/platform';
+import { loadProducts } from '../lib/products';
+import { text, wholeNumber } from '../lib/validate';
+
+const { owner } = Astro.locals;
+const { products, productList } = await loadProducts();
+const problems: string[] = [];
+let saved = Astro.url.searchParams.has('saved');
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const id = text(form, 'id', 40);
+  const product = text(form, 'product', 20);
+  const name = text(form, 'name', 40);
+  const months = wholeNumber(form, 'months', 1, 36);
+  const price = wholeNumber(form, 'price', 0, 1_000_000);
+
+  if (!products[product]) problems.push('المنتج ده مش موجود.');
+  if (!name) problems.push('اسم الخطة مطلوب.');
+  if (months === null) problems.push('عدد الشهور لازم يكون من 1 لـ 36.');
+  if (price === null) problems.push('السعر لازم يكون رقم.');
+
+  if (problems.length === 0 && months !== null && price !== null) {
+    // A new plan starts active; an existing one follows its checkbox.
+    await savePlan({ id: id || undefined, product, name, months, price, is_active: id ? form.has('is_active') : true });
+    await recordEvent({ actor: owner.email, action: 'plan_saved', detail: `${products[product].customers} · ${name} · ${price} ج` });
+    return Astro.redirect('/plans?saved');
+  }
+  saved = false;
+}
+
+const plans = await listPlans({ includeRetired: true });
+---
+
+<Owner title="الخطط" subtitle="الاشتراكات والأسعار اللي بتعرضها لكل منتج">
+  {saved && <p class="notice" role="status"><Icon name="check" />اتحفظ.</p>}
+  {
+    problems.length > 0 && (
+      <div class="notice notice--error" role="alert">
+        <Icon name="ban" />
+        <ul>{problems.map((problem) => <li>{problem}</li>)}</ul>
+      </div>
+    )
+  }
+
+  {
+    productList.map((product) => (
+      <section class="card" aria-labelledby={`plans-${product.key}`}>
+        <h2 id={`plans-${product.key}`} class="card__title"><Icon name={product.icon} />{product.customers}</h2>
+
+        {plans.filter((plan) => plan.product === product.key).map((plan) => (
+          <form class="row" method="post">
+            <input type="hidden" name="id" value={plan.id} />
+            <input type="hidden" name="product" value={product.key} />
+            <input class="grow" name="name" type="text" value={plan.name} aria-label="اسم الخطة" required maxlength="40" />
+            <input class="auto" name="months" type="number" value={plan.months} min="1" max="36" aria-label="عدد الشهور" required />
+            <input class="auto" name="price" type="number" value={plan.price} min="0" aria-label="السعر بالجنيه" required />
+            <label class="small">
+              <input type="checkbox" name="is_active" checked={plan.is_active} />
+              معروضة
+            </label>
+            <button class="btn btn--sm" type="submit">حفظ</button>
+          </form>
+        ))}
+
+        <form class="row" method="post">
+          <input type="hidden" name="product" value={product.key} />
+          <input class="grow" name="name" type="text" placeholder="خطة جديدة، مثال: نص سنوي" aria-label="اسم الخطة الجديدة" required maxlength="40" />
+          <input class="auto" name="months" type="number" placeholder="شهور" min="1" max="36" aria-label="عدد شهور الخطة الجديدة" required />
+          <input class="auto" name="price" type="number" placeholder="السعر" min="0" aria-label="سعر الخطة الجديدة" required />
+          <button class="btn btn--sm btn--primary" type="submit">إضافة</button>
+        </form>
+        <p class="hint">الخانات بالترتيب: الاسم، عدد الشهور اللي الدفعة بتغطيها، السعر بالجنيه. تعديل خطة ما بيغيّرش سعر العملاء اللي عليها فعلاً.</p>
+      </section>
+    ))
+  }
+</Owner>

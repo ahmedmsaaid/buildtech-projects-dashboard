@@ -1,0 +1,177 @@
+---
+/**
+ * Adds a customer of any product, with its first sign-in. The sign-in's
+ * password is generated here and shown once on the result screen: it is not
+ * stored in readable form and is never put in a link.
+ */
+import Icon from '../../components/Icon.astro';
+import Owner from '../../layouts/Owner.astro';
+import { recordEvent } from '../../lib/events';
+import { createAccount, listPlans } from '../../lib/platform';
+import { loadProducts, platformUrl } from '../../lib/products';
+import { nowIn } from '../../lib/time';
+import { egyptianMobile, text } from '../../lib/validate';
+
+/** Addresses that already mean something on the site. */
+const { owner } = Astro.locals;
+const { products, productList } = await loadProducts();
+// Without the platform there is no list of products to create a customer of.
+if (productList.length === 0) return Astro.redirect('/');
+
+const RESERVED_SLUGS = ['admin', 'owner', 'api', 'demo', 'site', 'login', 'logout', 'suspended', 'internal', 'enter', ...productList.map((entry) => entry.dashboardPath.slice(1))];
+
+// The product comes from the address, so choosing another one reloads the right questions and plans.
+const product = products[Astro.url.searchParams.get('product') ?? ''] ?? productList[0];
+const plans = await listPlans({ product: product.key });
+
+const problems: string[] = [];
+let typed = { name: '', slug: '', contactName: '', contactPhone: '', staffEmail: '', planId: '' };
+let answers: Record<string, string> = {};
+let created: { accountId: string; password: string } | null = null;
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  typed = {
+    name: text(form, 'name', 80),
+    slug: text(form, 'slug', 40).toLowerCase(),
+    contactName: text(form, 'contact_name', 80),
+    contactPhone: text(form, 'contact_phone', 20),
+    staffEmail: text(form, 'staff_email', 120).toLowerCase(),
+    planId: text(form, 'plan_id', 40),
+  };
+  answers = Object.fromEntries(product.setupFields.map((field) => [field.name, text(form, field.name, 80)]));
+  const mobile = typed.contactPhone ? egyptianMobile(typed.contactPhone) : '';
+
+  if (!typed.name) problems.push('اسم العميل مطلوب.');
+  if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(typed.slug)) problems.push('اللينك لازم يكون حروف إنجليزية صغيرة وأرقام وشرطات بس.');
+  else if (RESERVED_SLUGS.includes(typed.slug)) problems.push('اللينك ده محجوز للنظام. اختار غيره.');
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(typed.staffEmail)) problems.push('اكتب إيميل صحيح لحساب الدخول.');
+  if (mobile === null) problems.push('رقم موبايل المسؤول لازم يكون 11 رقم ويبدأ بـ 01.');
+
+  if (problems.length === 0 && mobile !== null) {
+    const result = await createAccount(
+      { product: product.key, ...typed, contactPhone: mobile, planId: typed.planId || null, answers },
+      nowIn('Africa/Cairo').day,
+    );
+    if (result.ok) {
+      created = result;
+      await recordEvent({ actor: owner.email, action: 'account_created', account: { id: result.accountId, name: typed.name }, detail: product.customer });
+    } else {
+      problems.push(
+        result.reason === 'slug_taken'
+          ? 'اللينك ده مستخدم لعميل تاني.'
+          : result.reason === 'email_taken'
+            ? 'الإيميل ده مستخدم لحساب تاني.'
+            : result.reason === 'platform_unreachable'
+              ? 'المنصة ما ردّتش، فالعميل ما اتعملش. جرّب تاني بعد شوية.'
+              : 'اختار خطة من القايمة.',
+      );
+    }
+  }
+}
+---
+
+<Owner title="عميل جديد" subtitle="العميل بيتعمل جاهز للشغل، وبيبدأ بـ 14 يوم تجربة">
+  <a slot="actions" class="btn btn--sm btn--ghost" href="/">كل العملاء</a>
+
+  {
+    created ? (
+      <section class="card" aria-labelledby="done-title">
+        <h2 id="done-title" class="card__title"><Icon name="check" />العميل اتعمل</h2>
+        <p>ابعت البيانات دي للعميل. <strong>كلمة السر مش هتظهر تاني</strong>، ولو ضاعت تقدر تعمل واحدة جديدة من صفحة العميل.</p>
+        <dl class="facts">
+          <dt>الصفحة العامة</dt>
+          <dd class="ltr">{`${platformUrl}/${typed.slug}`}</dd>
+          <dt>صفحة الدخول</dt>
+          <dd class="ltr">{`${platformUrl}/login`}</dd>
+          <dt>الإيميل</dt>
+          <dd class="ltr">{typed.staffEmail}</dd>
+          <dt>كلمة السر</dt>
+          <dd class="ltr">{created.password}</dd>
+        </dl>
+        <div class="row">
+          <a class="btn btn--primary" href={`/accounts/${created.accountId}`}>افتح صفحة العميل</a>
+          <a class="btn" href={`/accounts/new?product=${product.key}`}>ضيف عميل تاني</a>
+        </div>
+      </section>
+    ) : (
+      <>
+        {problems.length > 0 && (
+          <div class="notice notice--error" role="alert">
+            <Icon name="ban" />
+            <ul>{problems.map((problem) => <li>{problem}</li>)}</ul>
+          </div>
+        )}
+
+        <nav class="row" aria-label="المنتج">
+          <span class="muted">المنتج:</span>
+          {
+            productList.map((option) => (
+              <a class:list={['btn', 'btn--sm', { 'btn--primary': option.key === product.key }]} href={`/accounts/new?product=${option.key}`}>
+                {option.customer}
+              </a>
+            ))
+          }
+        </nav>
+
+        <form class="stack" method="post">
+          <section class="card">
+            <h2 class="card__title"><Icon name={product.icon} />{product.customer}</h2>
+            <div class="grid-2">
+              <div class="field">
+                <label for="name">الاسم</label>
+                <input id="name" name="name" type="text" value={typed.name} required maxlength="80" />
+              </div>
+              <div class="field">
+                <label for="slug">اللينك</label>
+                <input id="slug" class="ltr" name="slug" type="text" value={typed.slug} required maxlength="40" placeholder="dr-ahmed" pattern="[a-z0-9]+(-[a-z0-9]+)*" />
+                <p class="hint">بيبقى عنوان الصفحة العامة. حروف إنجليزية صغيرة وشرطات.</p>
+              </div>
+              {
+                product.setupFields.map((field) => (
+                  <div class="field">
+                    <label for={field.name}>{field.label}</label>
+                    <input id={field.name} name={field.name} type="text" value={answers[field.name] ?? ''} maxlength="80" />
+                  </div>
+                ))
+              }
+            </div>
+          </section>
+
+          <section class="card">
+            <h2 class="card__title"><Icon name="users" />المسؤول وحساب الدخول</h2>
+            <div class="grid-2">
+              <div class="field">
+                <label for="contact_name">اسم المسؤول</label>
+                <input id="contact_name" name="contact_name" type="text" value={typed.contactName} maxlength="80" />
+              </div>
+              <div class="field">
+                <label for="contact_phone">موبايل المسؤول</label>
+                <input id="contact_phone" class="ltr" name="contact_phone" type="tel" value={typed.contactPhone} inputmode="tel" placeholder="01xxxxxxxxx" />
+              </div>
+              <div class="field">
+                <label for="staff_email">إيميل حساب الدخول</label>
+                <input id="staff_email" class="ltr" name="staff_email" type="email" value={typed.staffEmail} required maxlength="120" />
+                <p class="hint">العميل هيدخل بيه على لوحته. كلمة السر بتتعمل تلقائي.</p>
+              </div>
+            </div>
+          </section>
+
+          <section class="card">
+            <h2 class="card__title"><Icon name="wallet" />الخطة</h2>
+            <div class="field">
+              <label for="plan_id">الخطة بعد التجربة</label>
+              <select id="plan_id" name="plan_id">
+                <option value="">لسه ما اختارش</option>
+                {plans.map((plan) => <option value={plan.id} selected={plan.id === typed.planId}>{plan.name} · {plan.price} ج</option>)}
+              </select>
+              <p class="hint">التجربة 14 يوم في كل الأحوال. الأسعار بتتعدّل من صفحة <a href="/plans">الخطط</a>.</p>
+            </div>
+          </section>
+
+          <div><button class="btn btn--primary" type="submit"><Icon name="plus" />اعمل العميل</button></div>
+        </form>
+      </>
+    )
+  }
+</Owner>

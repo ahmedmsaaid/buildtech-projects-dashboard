@@ -1,0 +1,336 @@
+---
+/**
+ * One customer from the owner's side: subscription and payments, turning the
+ * account off and on, its sign-ins, opening its dashboard, and its history.
+ * Every action here is written to the log.
+ */
+import Icon from '../../components/Icon.astro';
+import Owner from '../../layouts/Owner.astro';
+import { getAccountById } from '../../lib/accounts';
+import { eventLabels, listEvents, recordEvent } from '../../lib/events';
+import {
+  createDashboardPass,
+  getUsage,
+  listPayments,
+  listPlans,
+  listStaff,
+  recordPayment,
+  resetStaffPassword,
+  setAccountStatus,
+  stateLabels,
+  stateTone,
+  subscriptionState,
+  updateSubscription,
+} from '../../lib/platform';
+import { fallbackProduct, loadProducts, platformUrl } from '../../lib/products';
+import { addDays, formatDay, formatMoment, formatShortDay, isDay, nowIn } from '../../lib/time';
+import { text, wholeNumber } from '../../lib/validate';
+
+let account = await getAccountById(Astro.params.id ?? '');
+if (!account) return Astro.redirect('/');
+
+const { owner } = Astro.locals;
+const product = (await loadProducts()).products[account.product] ?? fallbackProduct(account.product);
+const today = nowIn('Africa/Cairo').day;
+const here = `/accounts/${account.id}`;
+const subject = { id: account.id, name: account.name };
+const problems: string[] = [];
+let newPassword: { email: string; password: string } | null = null;
+let saved = Astro.url.searchParams.has('saved');
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const action = text(form, '_action', 20);
+
+  if (action === 'status') {
+    const next = account.status === 'active' ? 'suspended' : 'active';
+    await setAccountStatus(account.id, next);
+    await recordEvent({ actor: owner.email, action: next === 'suspended' ? 'account_suspended' : 'account_activated', account: subject });
+    return Astro.redirect(`${here}?saved`);
+  }
+
+  if (action === 'subscription') {
+    const priceText = text(form, 'price', 8);
+    const price = priceText === '' ? null : wholeNumber(form, 'price', 0, 1_000_000);
+    const paidUntil = text(form, 'paid_until', 10);
+    if (priceText !== '' && price === null) problems.push('سعر الاشتراك لازم يكون رقم.');
+    if (paidUntil && !isDay(paidUntil)) problems.push('تاريخ نهاية الاشتراك مش صحيح.');
+
+    if (problems.length === 0) {
+      const changed = await updateSubscription(account, {
+        planId: text(form, 'plan_id', 40) || null,
+        price,
+        paid_until: paidUntil || null,
+        contact_name: text(form, 'contact_name', 80),
+        contact_phone: text(form, 'contact_phone', 20),
+        owner_note: text(form, 'owner_note', 1000),
+      });
+      if (changed) {
+        await recordEvent({ actor: owner.email, action: 'subscription_changed', account: subject });
+        return Astro.redirect(`${here}?saved`);
+      }
+      problems.push('اختار خطة من القايمة.');
+    }
+  }
+
+  if (action === 'payment') {
+    const amount = wholeNumber(form, 'amount', 0, 1_000_000);
+    const months = wholeNumber(form, 'months', 1, 36);
+    if (amount === null) problems.push('المبلغ لازم يكون رقم.');
+    if (months === null) problems.push('عدد الشهور لازم يكون من 1 لـ 36.');
+
+    if (problems.length === 0 && amount !== null && months !== null) {
+      const coversUntil = await recordPayment(account, amount, months, text(form, 'note', 120), today);
+      await recordEvent({ actor: owner.email, action: 'payment_recorded', account: subject, detail: `${amount} ج · ساري لحد ${formatShortDay(coversUntil)}` });
+      return Astro.redirect(`${here}?saved`);
+    }
+  }
+
+  if (action === 'reset-password') {
+    const staff = (await listStaff(account.id)).find((entry) => entry.id === text(form, 'user_id', 40));
+    const password = staff && (await resetStaffPassword(account.id, staff.id));
+    if (staff && password) {
+      newPassword = { email: staff.email, password };
+      await recordEvent({ actor: owner.email, action: 'password_reset', account: subject, detail: staff.email });
+    } else problems.push('الحساب ده مش موجود.');
+  }
+
+  // Opens the customer's dashboard exactly as their staff see it. It lives on the
+  // platform's address, so the browser is sent there with a one-use pass.
+  if (action === 'open-dashboard') {
+    const [staff] = await listStaff(account.id);
+    if (account.status === 'suspended') problems.push('العميل موقوف. فعّله الأول عشان تفتح لوحته.');
+    else if (!staff) problems.push('العميل ملوش حساب دخول.');
+    else {
+      const pass = await createDashboardPass(staff.id);
+      await recordEvent({ actor: owner.email, action: 'dashboard_opened', account: subject, detail: staff.email });
+      return Astro.redirect(`${platformUrl}/enter?pass=${pass}`);
+    }
+  }
+
+  saved = false;
+  account = (await getAccountById(account.id)) ?? account;
+}
+
+// Usage comes from the platform, which reads the same database; it is asked
+// first and alone so the two never query at the same moment.
+const usage = await getUsage(account, addDays(today, -29));
+const [payments, staff, plans, events] = await Promise.all([
+  listPayments(account.id),
+  listStaff(account.id),
+  listPlans({ product: account.product, includeRetired: true }),
+  listEvents({ accountId: account.id, limit: 12 }),
+]);
+const state = subscriptionState(account, today);
+const totalPaid = payments.reduce((sum, payment) => sum + payment.amount, 0);
+// Retired plans are offered only to the account that is already on one.
+const offeredPlans = plans.filter((plan) => plan.is_active || plan.id === account.plan_id);
+---
+
+<Owner title={account.name} subtitle={`${product.customer} · /${account.slug}`}>
+  <Fragment slot="actions">
+    <span class="badge" data-status={stateTone[state]}>{stateLabels[state]}</span>
+    <a class="btn btn--sm" href={`${platformUrl}/${account.slug}`} target="_blank" rel="noopener"><Icon name="external" />الصفحة العامة</a>
+    <form method="post" target="_blank">
+      <input type="hidden" name="_action" value="open-dashboard" />
+      <button class="btn btn--sm btn--primary" type="submit"><Icon name="key" />ادخل لوحة العميل</button>
+    </form>
+  </Fragment>
+
+  {saved && <p class="notice" role="status"><Icon name="check" />اتحفظ.</p>}
+  {
+    problems.length > 0 && (
+      <div class="notice notice--error" role="alert">
+        <Icon name="ban" />
+        <ul>{problems.map((problem) => <li>{problem}</li>)}</ul>
+      </div>
+    )
+  }
+  {
+    newPassword && (
+      <section class="card" role="status">
+        <h2 class="card__title"><Icon name="key" />كلمة سر جديدة</h2>
+        <p>ابعتها للعميل. <strong>مش هتظهر تاني</strong>، والحساب اتسجّل خروجه من كل الأجهزة.</p>
+        <dl class="facts">
+          <dt>الإيميل</dt>
+          <dd class="ltr">{newPassword.email}</dd>
+          <dt>كلمة السر</dt>
+          <dd class="ltr">{newPassword.password}</dd>
+        </dl>
+      </section>
+    )
+  }
+
+  <div class="stats">
+    {usage.map((figure) => <p class="stat"><span class="stat__icon"><Icon name={product.icon} /></span><span><strong>{figure.value}</strong><span>{figure.label}</span></span></p>)}
+    <p class="stat"><span class="stat__icon"><Icon name="wallet" /></span><span><strong>{totalPaid}</strong><span>إجمالي المدفوع (ج)</span></span></p>
+  </div>
+
+  <div class="board">
+    <div class="stack">
+      <form class="card" method="post">
+        <input type="hidden" name="_action" value="subscription" />
+        <div class="card__head">
+          <h2 class="card__title"><Icon name="wallet" />الاشتراك</h2>
+          <span class="muted small">{account.paid_until ? `ساري لحد ${formatDay(account.paid_until)}` : 'من غير تاريخ نهاية'}</span>
+        </div>
+        <div class="grid-2">
+          <div class="field">
+            <label for="plan_id">الخطة</label>
+            <select id="plan_id" name="plan_id">
+              <option value="">من غير خطة (تجربة)</option>
+              {
+                offeredPlans.map((plan) => (
+                  <option value={plan.id} selected={plan.id === account.plan_id}>
+                    {plan.name} · {plan.price} ج{!plan.is_active && ' (موقوفة)'}
+                  </option>
+                ))
+              }
+            </select>
+          </div>
+          <div class="field">
+            <label for="price">سعر خاص للعميل ده (ج)</label>
+            <input id="price" name="price" type="number" value={account.plan_id ? account.price : ''} min="0" placeholder="سعر الخطة" />
+            <p class="hint">سيبه فاضي عشان ياخد سعر الخطة.</p>
+          </div>
+          <div class="field">
+            <label for="paid_until">ساري لحد</label>
+            <input id="paid_until" name="paid_until" type="date" value={account.paid_until ?? ''} />
+            <p class="hint">بيتحدّث لوحده مع كل دفعة.</p>
+          </div>
+          <div class="field">
+            <label for="contact_name">اسم المسؤول</label>
+            <input id="contact_name" name="contact_name" type="text" value={account.contact_name} maxlength="80" />
+          </div>
+          <div class="field">
+            <label for="contact_phone">موبايل المسؤول</label>
+            <input id="contact_phone" class="ltr" name="contact_phone" type="tel" value={account.contact_phone} maxlength="20" />
+          </div>
+        </div>
+        <div class="field">
+          <label for="owner_note">ملاحظاتك عن العميل</label>
+          <textarea id="owner_note" name="owner_note" rows="3" maxlength="1000">{account.owner_note}</textarea>
+          <p class="hint">ليك إنت بس. العميل مش بيشوفها.</p>
+        </div>
+        <div><button class="btn btn--primary" type="submit">حفظ الاشتراك</button></div>
+      </form>
+
+      <section class="card" aria-labelledby="payments-title">
+        <h2 id="payments-title" class="card__title"><Icon name="chart" />الدفعات</h2>
+        {
+          payments.length === 0 ? (
+            <p class="muted">لسه مفيش دفعات مسجّلة.</p>
+          ) : (
+            <div class="table-wrap">
+              <table class="cards-on-phone">
+                <thead>
+                  <tr>
+                    <th>التاريخ</th>
+                    <th>المبلغ</th>
+                    <th>غطّت لحد</th>
+                    <th>ملاحظة</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {payments.map((payment) => (
+                    <tr>
+                      <td data-label="التاريخ">{formatShortDay(payment.paid_on)}</td>
+                      <td data-label="المبلغ">{payment.amount} ج</td>
+                      <td data-label="غطّت لحد">{formatShortDay(payment.covers_until)}</td>
+                      <td data-label="ملاحظة">{payment.note || '·'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        }
+      </section>
+
+      <section class="card" aria-labelledby="events-title">
+        <div class="card__head">
+          <h2 id="events-title" class="card__title"><Icon name="note" />آخر اللي حصل</h2>
+          <a class="btn btn--sm btn--ghost" href="/log">السجل كله</a>
+        </div>
+        {
+          events.length === 0 ? (
+            <p class="muted">مفيش أحداث مسجّلة.</p>
+          ) : (
+            <ul class="queue">
+              {events.map((event) => (
+                <li>
+                  <span class="grow">
+                    <strong>{eventLabels[event.action] ?? event.action}</strong>
+                    {event.detail && <span class="muted small"> · {event.detail}</span>}
+                    <span class="block muted small">{formatMoment(event.created_at, 'Africa/Cairo')} · <span class="ltr">{event.actor}</span></span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )
+        }
+      </section>
+    </div>
+
+    <div class="board__side stack">
+      <form class="card" method="post">
+        <input type="hidden" name="_action" value="payment" />
+        <h2 class="card__title"><Icon name="plus" />تسجيل دفعة</h2>
+        <div class="grid-2">
+          <div class="field">
+            <label for="amount">المبلغ (ج)</label>
+            <input id="amount" name="amount" type="number" value={account.price} min="0" required />
+          </div>
+          <div class="field">
+            <label for="months">عدد الشهور</label>
+            <input id="months" name="months" type="number" value={account.period_months} min="1" max="36" required />
+          </div>
+        </div>
+        <div class="field">
+          <label for="note">ملاحظة (اختياري)</label>
+          <input id="note" name="note" type="text" maxlength="120" placeholder="إنستاباي، كاش..." />
+        </div>
+        <button class="btn btn--primary btn--block" type="submit">سجّل الدفعة ومدّ الاشتراك</button>
+        <p class="hint">المدة بتتحسب من نهاية الاشتراك الحالي، أو من النهارده لو منتهي.</p>
+      </form>
+
+      <section class="card" aria-labelledby="staff-title">
+        <h2 id="staff-title" class="card__title"><Icon name="users" />حسابات الدخول</h2>
+        <ul class="queue">
+          {
+            staff.map((entry) => (
+              <li>
+                <span class="grow">
+                  <strong class="ltr">{entry.email}</strong>
+                  {entry.name && <span class="block muted small">{entry.name}</span>}
+                </span>
+                <form method="post">
+                  <input type="hidden" name="_action" value="reset-password" />
+                  <input type="hidden" name="user_id" value={entry.id} />
+                  <button class="btn btn--sm" type="submit">كلمة سر جديدة</button>
+                </form>
+              </li>
+            ))
+          }
+        </ul>
+      </section>
+
+      <section class="card" aria-labelledby="status-title">
+        <h2 id="status-title" class="card__title"><Icon name="ban" />{account.status === 'active' ? 'إيقاف العميل' : 'العميل موقوف'}</h2>
+        <p class="hint">
+          {
+            account.status === 'active'
+              ? 'الإيقاف بيقفل الصفحة العامة ولوحة العميل فوراً. البيانات بتفضل محفوظة وترجع لما تفعّله.'
+              : 'الصفحة العامة ولوحة العميل مقفولين. التفعيل بيرجّع كل حاجة زي ما كانت.'
+          }
+        </p>
+        <form method="post">
+          <input type="hidden" name="_action" value="status" />
+          <button class:list={['btn', 'btn--block', account.status === 'active' ? 'btn--danger' : 'btn--primary']} type="submit">
+            {account.status === 'active' ? 'أوقف العميل' : 'فعّل العميل'}
+          </button>
+        </form>
+      </section>
+    </div>
+  </div>
+</Owner>

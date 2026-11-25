@@ -1,0 +1,55 @@
+---
+/** Sign-in for the platform owner. The middleware sends signed-in owners straight to the home page. */
+import Icon from '../components/Icon.astro';
+import Base from '../layouts/Base.astro';
+import { recordEvent } from '../lib/events';
+import { ownerSignIn } from '../lib/owner-auth';
+import { signInLimiter } from '../lib/rate-limit';
+import { text } from '../lib/validate';
+
+let failed = false;
+let limited = false;
+let email = '';
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  email = text(form, 'email', 120);
+  const password = typeof form.get('password') === 'string' ? String(form.get('password')) : '';
+
+  limited = signInLimiter.isLimited(`owner:${Astro.clientAddress}`);
+  if (!limited && (await ownerSignIn(Astro.cookies, email, password))) {
+    await recordEvent({ actor: email.toLowerCase(), action: 'owner_signed_in' });
+    return Astro.redirect('/');
+  }
+  failed = !limited;
+}
+---
+
+<Base title="دخول لوحة المنصة">
+  <main class="shell">
+    <header class="hero">
+      <div class="hero__id">
+        <span class="avatar"><Icon name="shield" /></span>
+        <div>
+          <h1>لوحة المنصة</h1>
+          <p>إدارة العيادات والاشتراكات.</p>
+        </div>
+      </div>
+    </header>
+
+    {failed && <p class="notice notice--error" role="alert"><Icon name="ban" />الإيميل أو كلمة السر غلط.</p>}
+    {limited && <p class="notice notice--error" role="alert"><Icon name="ban" />محاولات كتير. جرّب تاني بعد عشر دقايق.</p>}
+
+    <form class="card" method="post">
+      <div class="field">
+        <label for="email">الإيميل</label>
+        <input id="email" class="ltr" name="email" type="email" value={email} autocomplete="username" required />
+      </div>
+      <div class="field">
+        <label for="password">كلمة السر</label>
+        <input id="password" class="ltr" name="password" type="password" autocomplete="current-password" required />
+      </div>
+      <button class="btn btn--primary btn--block" type="submit">دخول</button>
+    </form>
+  </main>
+</Base>

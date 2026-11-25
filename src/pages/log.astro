@@ -1,0 +1,43 @@
+---
+/** The audit trail: everything done on the platform, newest first. */
+import Owner from '../layouts/Owner.astro';
+import { eventLabels, listEvents } from '../lib/events';
+import { formatMoment } from '../lib/time';
+
+const events = await listEvents({ limit: 200 });
+---
+
+<Owner title="السجل" subtitle="كل اللي حصل على المنصة ومين عمله، الأحدث فوق">
+  {
+    events.length === 0 ? (
+      <p class="card muted">مفيش أحداث مسجّلة لسه.</p>
+    ) : (
+      <div class="card table-wrap">
+        <table class="cards-on-phone">
+          <thead>
+            <tr>
+              <th>الوقت</th>
+              <th>اللي حصل</th>
+              <th>العميل</th>
+              <th>التفاصيل</th>
+              <th>مين</th>
+            </tr>
+          </thead>
+          <tbody>
+            {events.map((event) => (
+              <tr>
+                <td data-label="الوقت">{formatMoment(event.created_at, 'Africa/Cairo')}</td>
+                <td data-label="اللي حصل"><strong>{eventLabels[event.action] ?? event.action}</strong></td>
+                <td data-label="العميل">
+                  {event.account_id ? <a href={`/accounts/${event.account_id}`}>{event.account_name}</a> : '·'}
+                </td>
+                <td data-label="التفاصيل">{event.detail || '·'}</td>
+                <td data-label="مين"><span class="ltr">{event.actor}</span></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )
+  }
+</Owner>
