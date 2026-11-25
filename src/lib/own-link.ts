@@ -62,10 +62,14 @@ export async function setOwnLink(accountId: string, address: string, previous: s
   if (canManageAddresses && address !== previous) {
     try {
       const response = await vercel(`/v10/projects/${encodeURIComponent(project)}/domains`, 'POST', { name: address });
-      // 409 means some project already has this address; 400 covers an address that is already on ours.
+      // 409 means some other project already has this address.
       if (response.status === 409) return { ok: false, reason: 'taken_elsewhere' };
-      if (!response.ok && response.status !== 400) return { ok: false, reason: 'refused' };
-      if (response.ok) needsDns = (await response.json()).verified === false || !address.endsWith('.vercel.app');
+      const answer = await response.text();
+      // Vercel answers 400 both for an address it will not accept and for one
+      // that is already on our project; only the second is fine to save.
+      const alreadyOurs = response.status === 400 && /already/i.test(answer);
+      if (!response.ok && !alreadyOurs) return { ok: false, reason: 'refused' };
+      if (response.ok) needsDns = (JSON.parse(answer) as { verified?: boolean }).verified === false || !address.endsWith('.vercel.app');
     } catch {
       return { ok: false, reason: 'unreachable' };
     }
