@@ -22,6 +22,7 @@ import {
   subscriptionState,
   updateSubscription,
 } from '../../lib/platform';
+import { canManageAddresses, removeOwnLink, setOwnLink, toAddress } from '../../lib/own-link';
 import { fallbackProduct, loadProducts, platformUrl } from '../../lib/products';
 import { addDays, formatDay, formatMoment, formatShortDay, isDay, nowIn } from '../../lib/time';
 import { text, wholeNumber } from '../../lib/validate';
@@ -37,6 +38,8 @@ const subject = { id: account.id, name: account.name };
 const problems: string[] = [];
 let newPassword: { email: string; password: string } | null = null;
 let saved = Astro.url.searchParams.has('saved');
+// Set right after an address was given, to say what is left to do, if anything.
+const linked = Astro.url.searchParams.get('linked');
 
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
@@ -95,6 +98,33 @@ if (Astro.request.method === 'POST') {
     } else problems.push('الحساب ده مش موجود.');
   }
 
+  if (action === 'own-link') {
+    const address = toAddress(text(form, 'address', 120));
+    if (!address) problems.push('اسم اللينك لازم يكون حروف إنجليزي صغيرة وأرقام وشرطة (-) بس، من 3 حروف.');
+    else {
+      const result = await setOwnLink(account.id, address, account.domain);
+      if (result.ok) {
+        await recordEvent({ actor: owner.email, action: 'link_changed', account: subject, detail: address });
+        return Astro.redirect(`${here}?linked=${!result.live ? 'manual' : result.needsDns ? 'dns' : 'ready'}`);
+      }
+      problems.push(
+        {
+          taken_here: 'اللينك ده مع عميل تاني عندك.',
+          taken_elsewhere: 'الاسم ده مأخود على فيرسيل. جرّب اسم تاني.',
+          refused: 'فيرسيل رفض الطلب. راجع إن التوكن واسم المشروع مظبوطين.',
+          unreachable: 'مقدرتش أوصل لفيرسيل. جرّب تاني بعد شوية.',
+          is_platform: 'ده لينك المنصة نفسها. اختار اسم تاني.',
+        }[result.reason],
+      );
+    }
+  }
+
+  if (action === 'remove-link' && account.domain) {
+    await removeOwnLink(account.id, account.domain);
+    await recordEvent({ actor: owner.email, action: 'link_changed', account: subject, detail: `اتشال: ${account.domain}` });
+    return Astro.redirect(`${here}?saved`);
+  }
+
   // Opens the customer's dashboard exactly as their staff see it. It lives on the
   // platform's address, so the browser is sent there with a one-use pass.
   if (action === 'open-dashboard') {
@@ -130,7 +160,7 @@ const offeredPlans = plans.filter((plan) => plan.is_active || plan.id === accoun
 <Owner title={account.name} subtitle={`${product.customer} · /${account.slug}`}>
   <Fragment slot="actions">
     <span class="badge" data-status={stateTone[state]}>{stateLabels[state]}</span>
-    <a class="btn btn--sm" href={`${platformUrl}/${account.slug}`} target="_blank" rel="noopener"><Icon name="external" />الصفحة العامة</a>
+    <a class="btn btn--sm" href={account.domain ? `https://${account.domain}` : `${platformUrl}/${account.slug}`} target="_blank" rel="noopener"><Icon name="external" />الصفحة العامة</a>
     <form method="post" target="_blank">
       <input type="hidden" name="_action" value="open-dashboard" />
       <button class="btn btn--sm btn--primary" type="submit"><Icon name="key" />ادخل لوحة العميل</button>
@@ -138,6 +168,16 @@ const offeredPlans = plans.filter((plan) => plan.is_active || plan.id === accoun
   </Fragment>
 
   {saved && <p class="notice" role="status"><Icon name="check" />اتحفظ.</p>}
+  {linked === 'ready' && <p class="notice" role="status"><Icon name="check" />اللينك الخاص اتعمل. ممكن ياخد دقيقة لحد ما يفتح.</p>}
+  {linked === 'dns' && <p class="notice" role="status"><Icon name="check" />الدومين اتضاف على فيرسيل. لسه محتاج تظبط الـ DNS بتاعه من صفحة Domains في فيرسيل عشان يفتح.</p>}
+  {
+    linked === 'manual' && account.domain && (
+      <p class="notice" role="status">
+        <Icon name="check" />
+        اللينك اتحفظ. فاضل خطوة: افتح مشروع المنصة على فيرسيل ← Settings ← Domains وضيف <strong class="ltr">{account.domain}</strong>
+      </p>
+    )
+  }
   {
     problems.length > 0 && (
       <div class="notice notice--error" role="alert">
@@ -293,6 +333,34 @@ const offeredPlans = plans.filter((plan) => plan.is_active || plan.id === accoun
         <button class="btn btn--primary btn--block" type="submit">سجّل الدفعة ومدّ الاشتراك</button>
         <p class="hint">المدة بتتحسب من نهاية الاشتراك الحالي، أو من النهارده لو منتهي.</p>
       </form>
+
+      <section class="card" aria-labelledby="link-title">
+        <h2 id="link-title" class="card__title"><Icon name="external" />لينكات العميل</h2>
+        <dl class="facts">
+          <dt>صفحته (للزباين)</dt>
+          <dd class="ltr">{account.domain ?? `${platformUrl.replace(/^https?:\/\//, '')}/${account.slug}`}</dd>
+          <dt>لوحته (للدخول)</dt>
+          <dd class="ltr">{account.domain ?? platformUrl.replace(/^https?:\/\//, '')}/login</dd>
+        </dl>
+        <form class="stack" method="post">
+          <input type="hidden" name="_action" value="own-link" />
+          <div class="field">
+            <label for="address">{account.domain ? 'غيّر اللينك الخاص' : 'اعمله لينك خاص بيه'}</label>
+            <input id="address" class="ltr" name="address" type="text" value={account.domain ?? `${account.slug}`} maxlength="120" required />
+            <p class="hint">اكتب الاسم بس وهيبقى <span class="ltr">الاسم.vercel.app</span>، أو اكتب دومين كامل لو العميل عنده دومين.</p>
+          </div>
+          <button class="btn btn--primary btn--block" type="submit">{account.domain ? 'غيّر اللينك' : 'اعمل لينك خاص'}</button>
+        </form>
+        {
+          account.domain && (
+            <form method="post">
+              <input type="hidden" name="_action" value="remove-link" />
+              <button class="btn btn--sm btn--ghost btn--block" type="submit">شيل اللينك الخاص</button>
+            </form>
+          )
+        }
+        {!canManageAddresses && <p class="hint">اللوحة لسه مش متوصلة بفيرسيل، فبعد الحفظ هتضيف اللينك في فيرسيل بإيدك.</p>}
+      </section>
 
       <section class="card" aria-labelledby="staff-title">
         <h2 id="staff-title" class="card__title"><Icon name="users" />حسابات الدخول</h2>

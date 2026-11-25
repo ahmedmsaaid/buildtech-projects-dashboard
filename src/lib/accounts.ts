@@ -18,10 +18,12 @@ export interface Account {
   contact_name: string;
   contact_phone: string;
   owner_note: string;
+  /** The customer's own web address, or null when they only have the shared one. */
+  domain: string | null;
 }
 
 export const ACCOUNT_COLUMNS = `accounts.id, accounts.product, accounts.slug, accounts.name, accounts.status, accounts.plan_id, accounts.price,
-  accounts.period_months, accounts.paid_until, accounts.contact_name, accounts.contact_phone, accounts.owner_note`;
+  accounts.period_months, accounts.paid_until, accounts.contact_name, accounts.contact_phone, accounts.owner_note, accounts.domain`;
 
 export async function getAccountById(id: string): Promise<Account | null> {
   const [account] = await query<Account>(`select ${ACCOUNT_COLUMNS} from accounts where id = $1`, [id]);
