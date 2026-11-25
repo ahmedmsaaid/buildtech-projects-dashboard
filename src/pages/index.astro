@@ -5,7 +5,7 @@
  */
 import Icon from '../components/Icon.astro';
 import Owner from '../layouts/Owner.astro';
-import { getIncomeByProduct, listAccounts, monthlyValue, stateLabels, stateTone, subscriptionState, type SubscriptionState } from '../lib/platform';
+import { countLiveDemos, getIncomeByProduct, listAccounts, monthlyValue, stateLabels, stateTone, subscriptionState, type SubscriptionState } from '../lib/platform';
 import { loadProducts } from '../lib/products';
 import { formatShortDay, nowIn } from '../lib/time';
 
@@ -15,7 +15,7 @@ const search = (Astro.url.searchParams.get('q') ?? '').trim().slice(0, 60);
 const stateFilter = Astro.url.searchParams.get('state') ?? '';
 const productFilter = Astro.url.searchParams.get('product') ?? '';
 
-const [accounts, income] = await Promise.all([listAccounts(search), getIncomeByProduct(`${today.slice(0, 8)}01`)]);
+const [accounts, income, liveDemos] = await Promise.all([listAccounts(search), getIncomeByProduct(`${today.slice(0, 8)}01`), countLiveDemos()]);
 const rows = accounts.map((account) => ({ account, state: subscriptionState(account, today) }));
 
 const inProduct = productFilter ? rows.filter((row) => row.account.product === productFilter) : rows;
@@ -35,7 +35,7 @@ const link = (changes: { state?: string; product?: string }) => {
 };
 ---
 
-<Owner title="العملاء" subtitle={`${accounts.length} عميل على ${productList.length === 1 ? 'منتج واحد' : `${productList.length} منتجات`}`}>
+<Owner title="العملاء" subtitle={`${accounts.length} عميل على ${productList.length === 1 ? 'منتج واحد' : `${productList.length} منتجات`}${liveDemos > 0 ? ` · ${liveDemos} زائر بيجرّب دلوقتي` : ''}`}>
   <a slot="actions" class="btn btn--primary" href="/accounts/new"><Icon name="plus" />عميل جديد</a>
 
   {

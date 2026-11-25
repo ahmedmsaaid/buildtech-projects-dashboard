@@ -18,7 +18,7 @@ const { products, productList } = await loadProducts();
 // Without the platform there is no list of products to create a customer of.
 if (productList.length === 0) return Astro.redirect('/');
 
-const RESERVED_SLUGS = ['admin', 'owner', 'api', 'demo', 'site', 'login', 'logout', 'suspended', 'internal', 'enter', ...productList.map((entry) => entry.dashboardPath.slice(1))];
+const RESERVED_SLUGS = ['admin', 'owner', 'api', 'demo', 'try', 'site', 'login', 'logout', 'suspended', 'internal', 'enter', ...productList.map((entry) => entry.dashboardPath.slice(1))];
 
 // The product comes from the address, so choosing another one reloads the right questions and plans.
 const product = products[Astro.url.searchParams.get('product') ?? ''] ?? productList[0];
@@ -44,7 +44,8 @@ if (Astro.request.method === 'POST') {
 
   if (!typed.name) problems.push('اسم العميل مطلوب.');
   if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(typed.slug)) problems.push('اللينك لازم يكون حروف إنجليزية صغيرة وأرقام وشرطات بس.');
-  else if (RESERVED_SLUGS.includes(typed.slug)) problems.push('اللينك ده محجوز للنظام. اختار غيره.');
+  // Addresses starting with demo- belong to visitors' demos (see the platform's demo.ts).
+  else if (RESERVED_SLUGS.includes(typed.slug) || typed.slug.startsWith('demo-')) problems.push('اللينك ده محجوز للنظام. اختار غيره.');
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(typed.staffEmail)) problems.push('اكتب إيميل صحيح لحساب الدخول.');
   if (mobile === null) problems.push('رقم موبايل المسؤول لازم يكون 11 رقم ويبدأ بـ 01.');
 

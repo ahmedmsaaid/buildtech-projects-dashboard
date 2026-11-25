@@ -1,6 +1,5 @@
 ---
 /** Sign-in for the platform owner. The middleware sends signed-in owners straight to the home page. */
-import Icon from '../components/Icon.astro';
 import Base from '../layouts/Base.astro';
 import { recordEvent } from '../lib/events';
 import { ownerSignIn } from '../lib/owner-auth';
@@ -25,31 +24,258 @@ if (Astro.request.method === 'POST') {
 }
 ---
 
-<Base title="دخول لوحة المنصة">
-  <main class="shell">
-    <header class="hero">
-      <div class="hero__id">
-        <span class="avatar"><Icon name="shield" /></span>
-        <div>
-          <h1>لوحة المنصة</h1>
-          <p>إدارة العيادات والاشتراكات.</p>
-        </div>
-      </div>
-    </header>
+<Base title="دخول لوحة التحكم · BuildTech">
+  <div class="auth">
+    <aside class="auth__brand">
+      <span class="auth__logo">
+        <svg viewBox="0 0 64 64" width="40" height="40" aria-hidden="true">
+          <path d="M32 17v-6" stroke="#fff" stroke-width="4" fill="none" stroke-linecap="round"></path>
+          <circle cx="32" cy="8.5" r="4" fill="#19c37d"></circle>
+          <path fill-rule="evenodd" fill="#fff" d="M21 17h22a13 13 0 0 1 13 13v16a13 13 0 0 1-13 13H21a13 13 0 0 1-13-13V30a13 13 0 0 1 13-13zM21 24h22a7 7 0 0 1 7 7v13a7 7 0 0 1-7 7H21a7 7 0 0 1-7-7V31a7 7 0 0 1 7-7z"></path>
+          <path d="M21 31l7 6.5-7 6.5" stroke="#19c37d" stroke-width="4.5" fill="none" stroke-linecap="round" stroke-linejoin="round"></path>
+          <path d="M32 44h11" stroke="#19c37d" stroke-width="4.5" fill="none" stroke-linecap="round"></path>
+        </svg>
+        <span dir="ltr">Build<span>Tech</span></span>
+      </span>
 
-    {failed && <p class="notice notice--error" role="alert"><Icon name="ban" />الإيميل أو كلمة السر غلط.</p>}
-    {limited && <p class="notice notice--error" role="alert"><Icon name="ban" />محاولات كتير. جرّب تاني بعد عشر دقايق.</p>}
+      <div class="auth__pitch">
+        <p class="auth__eyebrow" dir="ltr">&gt; control_room</p>
+        <h1>كل منتجاتك <span>من مكان واحد</span></h1>
+        <ul>
+          <li>العملاء والاشتراكات والمدفوعات</li>
+          <li>كل منتج وأرقامه</li>
+          <li>سجل بكل حاجة حصلت</li>
+        </ul>
+      </div>
+    </aside>
 
-    <form class="card" method="post">
-      <div class="field">
-        <label for="email">الإيميل</label>
-        <input id="email" class="ltr" name="email" type="email" value={email} autocomplete="username" required />
-      </div>
-      <div class="field">
-        <label for="password">كلمة السر</label>
-        <input id="password" class="ltr" name="password" type="password" autocomplete="current-password" required />
-      </div>
-      <button class="btn btn--primary btn--block" type="submit">دخول</button>
-    </form>
-  </main>
+    <main class="auth__panel">
+      <section class="auth__card" aria-labelledby="signin-title">
+        <h2 id="signin-title">لوحة التحكم</h2>
+        <p class="auth__dim">الدخول لصاحب المنصة بس.</p>
+
+        {failed && <p class="auth__alert" role="alert">الإيميل أو كلمة السر غلط.</p>}
+        {limited && <p class="auth__alert" role="alert">محاولات كتير. جرّب تاني بعد عشر دقايق.</p>}
+
+        <form method="post">
+          <div class="auth__field">
+            <label for="email">الإيميل</label>
+            <input id="email" name="email" type="email" value={email} autocomplete="username" dir="ltr" required />
+          </div>
+          <div class="auth__field">
+            <label for="password">كلمة السر</label>
+            <input id="password" name="password" type="password" autocomplete="current-password" dir="ltr" required />
+          </div>
+          <button class="auth__btn" type="submit">دخول</button>
+        </form>
+      </section>
+    </main>
+  </div>
 </Base>
+
+<style is:global>
+  /* Dark edge to edge. */
+  body:has(.auth) {
+    background: #101314;
+  }
+</style>
+
+<style>
+  .auth {
+    --ink: #101314;
+    --panel: #181c1d;
+    --edge: #2c3335;
+    --paper: #f3f6f4;
+    --dim: #a3aba6;
+    --green: #19c37d;
+    --red: #ff8a80;
+
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    min-height: 100vh;
+    color: var(--paper);
+  }
+
+  .auth__brand {
+    display: grid;
+    align-content: space-between;
+    gap: 2rem;
+    padding: 1.5rem clamp(1rem, 0.5rem + 3vw, 3rem);
+    /* The faint grid of the BuildTech brand. */
+    background-image:
+      linear-gradient(rgb(243 246 244 / 4%) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(243 246 244 / 4%) 1px, transparent 1px);
+    background-size: 56px 56px;
+  }
+
+  .auth__logo {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.625rem;
+    justify-self: start;
+    color: #ffffff;
+    font-size: 1.4rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+
+  .auth__logo span span,
+  .auth h1 span {
+    color: var(--green);
+  }
+
+  /* On a phone the form comes first; the pitch is for screens with room to spare. */
+  .auth__pitch {
+    display: none;
+  }
+
+  .auth__eyebrow {
+    margin: 0 0 0.75rem;
+    color: var(--green);
+    font-family: Consolas, 'Courier New', monospace;
+    font-size: 0.875rem;
+    text-align: end;
+  }
+
+  .auth h1 {
+    margin: 0 0 1.5rem;
+    font-size: clamp(1.75rem, 1.2rem + 2.2vw, 3rem);
+    line-height: 1.25;
+  }
+
+  .auth__pitch ul {
+    display: grid;
+    gap: 0.75rem;
+    margin: 0;
+    padding: 0;
+    color: var(--dim);
+    list-style: none;
+  }
+
+  .auth__pitch li {
+    display: flex;
+    gap: 0.625rem;
+  }
+
+  .auth__pitch li::before {
+    content: '>';
+    color: var(--green);
+    font-family: Consolas, 'Courier New', monospace;
+    font-weight: 700;
+  }
+
+  .auth__panel {
+    display: grid;
+    align-content: center;
+    width: min(100% - 2rem, 26rem);
+    margin-inline: auto;
+    padding-block: 1rem 3rem;
+  }
+
+  .auth__card {
+    display: grid;
+    gap: 0.75rem;
+    padding: 1.75rem;
+    border: 1px solid var(--edge);
+    border-radius: 0.875rem;
+    background: var(--panel);
+  }
+
+  .auth h2 {
+    margin: 0;
+    font-size: 1.4rem;
+    line-height: 1.4;
+  }
+
+  .auth__dim {
+    margin: 0;
+    color: var(--dim);
+  }
+
+  .auth__alert {
+    margin: 0;
+    padding: 0.625rem 0.875rem;
+    border: 1px solid rgb(255 138 128 / 40%);
+    border-radius: 0.5rem;
+    background: rgb(255 138 128 / 10%);
+    color: var(--red);
+    font-weight: 600;
+  }
+
+  .auth form {
+    display: grid;
+    gap: 1rem;
+  }
+
+  .auth__field {
+    display: grid;
+    gap: 0.375rem;
+  }
+
+  .auth__field label {
+    font-weight: 600;
+  }
+
+  /* The shared form styles assume a light page; these inputs sit on the dark panel. */
+  .auth__field input {
+    height: 3rem;
+    border-color: var(--edge);
+    background-color: var(--ink);
+    color: var(--paper);
+    text-align: start;
+  }
+
+  .auth__field input:focus {
+    border-color: var(--green);
+    box-shadow: 0 0 0 3px rgb(25 195 125 / 25%);
+  }
+
+  /* Dark text on green: white on this green is too faint to read. */
+  .auth__btn {
+    width: 100%;
+    min-height: 3rem;
+    padding: 0.5rem 1.25rem;
+    border: 1px solid var(--green);
+    border-radius: 0.5rem;
+    background: var(--green);
+    color: var(--ink);
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+    transition:
+      background 150ms,
+      border-color 150ms;
+  }
+
+  .auth__btn:focus-visible {
+    outline: 3px solid rgb(25 195 125 / 55%);
+    outline-offset: 3px;
+  }
+
+  @media (hover: hover) {
+    .auth__btn:hover {
+      border-color: var(--paper);
+      background: var(--paper);
+    }
+  }
+
+  @media (min-width: 56rem) {
+    .auth {
+      grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+    }
+
+    .auth__brand {
+      padding-block: 2.5rem;
+      border-inline-end: 1px solid var(--edge);
+    }
+
+    .auth__pitch {
+      display: block;
+      max-width: 30rem;
+    }
+
+    .auth__panel {
+      padding-block: 3rem;
+    }
+  }
+</style>

@@ -96,16 +96,23 @@ export interface AccountRow extends Account {
   created_at: string | Date;
 }
 
-/** Every account with its plan's name, newest first. */
+/** Every customer with its plan's name, newest first. Visitors' demos are not customers, so they are left out. */
 export function listAccounts(search: string): Promise<AccountRow[]> {
   return query<AccountRow>(
     `select ${ACCOUNT_COLUMNS}, accounts.created_at, plans.name as plan_name,
        (select count(*)::int from users where users.account_id = accounts.id) as staff_count
      from accounts left join plans on plans.id = accounts.plan_id
-     where $1 = '' or accounts.name ilike '%' || $1 || '%' or accounts.slug ilike '%' || $1 || '%' or accounts.contact_name ilike '%' || $1 || '%'
+     where accounts.demo_expires_at is null
+       and ($1 = '' or accounts.name ilike '%' || $1 || '%' or accounts.slug ilike '%' || $1 || '%' or accounts.contact_name ilike '%' || $1 || '%')
      order by accounts.created_at desc`,
     [search],
   );
+}
+
+/** How many visitors are trying a product right now: demos started from the site that have not expired yet. */
+export async function countLiveDemos(): Promise<number> {
+  const [row] = await query<{ total: number }>('select count(*)::int as total from accounts where demo_expires_at > now()');
+  return row?.total ?? 0;
 }
 
 export interface NewAccount {
