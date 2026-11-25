@@ -18,7 +18,7 @@ const { products, productList } = await loadProducts();
 // Without the platform there is no list of products to create a customer of.
 if (productList.length === 0) return Astro.redirect('/');
 
-const RESERVED_SLUGS = ['admin', 'owner', 'api', 'demo', 'try', 'site', 'login', 'logout', 'suspended', 'internal', 'enter', ...productList.map((entry) => entry.dashboardPath.slice(1))];
+const RESERVED_SLUGS = ['admin', 'owner', 'api', 'demo', 'try', 'media', 'site', 'login', 'logout', 'suspended', 'internal', 'enter', ...productList.map((entry) => entry.dashboardPath.slice(1))];
 
 // The product comes from the address, so choosing another one reloads the right questions and plans.
 const product = products[Astro.url.searchParams.get('product') ?? ''] ?? productList[0];

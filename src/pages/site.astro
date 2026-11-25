@@ -1,0 +1,267 @@
+---
+/**
+ * The platform's home page (what a visitor sees at the bare address):
+ * its headline, color and picture, whether prices show, and its banners.
+ * Changes appear on the home page at once.
+ */
+import Icon from '../components/Icon.astro';
+import Owner from '../layouts/Owner.astro';
+import { recordEvent } from '../lib/events';
+import { platformUrl } from '../lib/products';
+import { deleteBanner, deleteImage, getBanner, getSiteSettings, isSafeLink, listBanners, saveBanner, saveSiteSettings, storeUpload } from '../lib/site';
+import { isHexColor, text, wholeNumber } from '../lib/validate';
+
+const { owner } = Astro.locals;
+const problems: string[] = [];
+let saved = Astro.url.searchParams.has('saved');
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  // The delete button sits in a banner's own form, next to its save button.
+  const action = form.has('delete') ? 'delete_banner' : text(form, 'action', 20);
+
+  if (action === 'look') {
+    const current = await getSiteSettings();
+    const accent = text(form, 'accent', 7);
+    const heroTitle = text(form, 'heroTitle', 80);
+    const heroLead = text(form, 'heroLead', 300);
+    if (!isHexColor(accent)) problems.push('اللون مش صحيح.');
+    if (!heroTitle) problems.push('العنوان مطلوب.');
+    if (!heroLead) problems.push('الوصف مطلوب.');
+
+    const upload = problems.length === 0 ? await storeUpload(form, 'image') : null;
+    if (upload && !upload.ok) problems.push(upload.problem);
+
+    if (problems.length === 0 && upload?.ok) {
+      // A new picture replaces the old one; the box removes it without a replacement.
+      const heroImageId = upload.id ?? (form.has('removeImage') ? null : current.heroImageId);
+      await saveSiteSettings({ accent, heroTitle, heroHighlight: text(form, 'heroHighlight', 60), heroLead, heroImageId, showPlans: form.has('showPlans') });
+      if (heroImageId !== current.heroImageId) await deleteImage(current.heroImageId);
+      await recordEvent({ actor: owner.email, action: 'site_changed', detail: 'شكل الصفحة الرئيسية' });
+      return Astro.redirect('/site?saved');
+    }
+  }
+
+  if (action === 'banner') {
+    const existing = text(form, 'id', 40) ? await getBanner(text(form, 'id', 40)) : null;
+    const title = text(form, 'title', 80);
+    const linkUrl = text(form, 'link_url', 300);
+    const linkLabel = text(form, 'link_label', 30);
+    if (!title) problems.push('عنوان البانر مطلوب.');
+    if (linkUrl && !isSafeLink(linkUrl)) problems.push('اللينك لازم يبدأ بـ https:// أو يكون صفحة في المنصة زي ‎/login‎ أو ‎#products‎.');
+    if (Boolean(linkUrl) !== Boolean(linkLabel)) problems.push('الزرار محتاج الاتنين: الكلمة اللي عليه واللينك اللي بيفتحه.');
+
+    const upload = problems.length === 0 ? await storeUpload(form, 'image') : null;
+    if (upload && !upload.ok) problems.push(upload.problem);
+
+    if (problems.length === 0 && upload?.ok) {
+      const imageId = upload.id ?? (form.has('removeImage') ? null : (existing?.image_id ?? null));
+      await saveBanner({
+        id: existing?.id,
+        title,
+        body: text(form, 'body', 300),
+        link_url: linkUrl,
+        link_label: linkLabel,
+        image_id: imageId,
+        // A new banner shows straight away; an existing one follows its checkbox.
+        is_active: existing ? form.has('is_active') : true,
+        sort_order: wholeNumber(form, 'sort_order', 0, 999) ?? 0,
+      });
+      if (existing && imageId !== existing.image_id) await deleteImage(existing.image_id);
+      await recordEvent({ actor: owner.email, action: 'site_changed', detail: `بانر: ${title}` });
+      return Astro.redirect('/site?saved');
+    }
+  }
+
+  if (action === 'delete_banner') {
+    const banner = await getBanner(text(form, 'id', 40));
+    if (banner) {
+      await deleteBanner(banner);
+      await recordEvent({ actor: owner.email, action: 'site_changed', detail: `مسح بانر: ${banner.title}` });
+    }
+    return Astro.redirect('/site?saved');
+  }
+  saved = false;
+}
+
+const [settings, banners] = await Promise.all([getSiteSettings(), listBanners()]);
+const imageUrl = (id: string) => `${platformUrl}/media/${id}`;
+---
+
+<Owner title="الصفحة الرئيسية" subtitle="شكل وكلام أول صفحة الزائر بيشوفها، والبانرات اللي عليها">
+  {platformUrl && <a slot="actions" class="btn" href={platformUrl} target="_blank" rel="noopener"><Icon name="external" />افتح الصفحة</a>}
+
+  {saved && <p class="notice" role="status"><Icon name="check" />اتحفظ. التغيير ظاهر على الصفحة دلوقتي.</p>}
+  {
+    problems.length > 0 && (
+      <div class="notice notice--error" role="alert">
+        <Icon name="ban" />
+        <ul>{problems.map((problem) => <li>{problem}</li>)}</ul>
+      </div>
+    )
+  }
+
+  <section class="card" aria-labelledby="look-title">
+    <h2 id="look-title" class="card__title"><Icon name="palette" />الشكل والكلام</h2>
+    <form class="stack" method="post" enctype="multipart/form-data">
+      <input type="hidden" name="action" value="look" />
+      <div class="grid-2">
+        <div class="field">
+          <label for="heroTitle">العنوان الكبير</label>
+          <input id="heroTitle" name="heroTitle" type="text" value={settings.heroTitle} maxlength="80" required />
+        </div>
+        <div class="field">
+          <label for="heroHighlight">الجزء الملوّن من العنوان (اختياري)</label>
+          <input id="heroHighlight" name="heroHighlight" type="text" value={settings.heroHighlight} maxlength="60" />
+        </div>
+      </div>
+      <div class="field">
+        <label for="heroLead">الوصف تحت العنوان</label>
+        <textarea id="heroLead" name="heroLead" rows="3" maxlength="300" required>{settings.heroLead}</textarea>
+      </div>
+      <div class="grid-2">
+        <div class="field">
+          <label for="accent">اللون الأساسي</label>
+          <input id="accent" name="accent" type="color" value={settings.accent} />
+          <p class="hint">لون الزراير والعناوين الملوّنة. الأخضر الأصلي: <span class="ltr">#19c37d</span></p>
+        </div>
+        <div class="field">
+          <label for="hero-image">صورة جنب العنوان (اختياري)</label>
+          <input id="hero-image" name="image" type="file" accept="image/jpeg,image/png,image/webp" />
+          <p class="hint">JPG أو PNG أو WebP، لحد 1.5 ميجا. الأفضل صورة عرضها حوالي 1200 بكسل.</p>
+        </div>
+      </div>
+      {
+        settings.heroImageId && (
+          <div class="row">
+            <img class="shot" src={imageUrl(settings.heroImageId)} alt="الصورة الحالية" />
+            <label class="small"><input type="checkbox" name="removeImage" /> شيل الصورة</label>
+          </div>
+        )
+      }
+      <label><input type="checkbox" name="showPlans" checked={settings.showPlans} /> اعرض الخطط والأسعار تحت كل منتج</label>
+      <p class="hint">الأسعار بتيجي من صفحة <a href="/plans">الخطط</a>. الخطة اللي مش «معروضة» هناك مش بتظهر.</p>
+      <div><button class="btn btn--primary" type="submit">حفظ</button></div>
+    </form>
+  </section>
+
+  <section class="card" aria-labelledby="banners-title">
+    <h2 id="banners-title" class="card__title"><Icon name="note" />البانرات</h2>
+    <p class="hint">البانر بيظهر تحت العنوان على طول: عرض، خبر، أو أي حاجة عايز الزائر يشوفها الأول.</p>
+
+    {
+      banners.map((banner) => (
+        <details class="fold">
+          <summary>
+            <span class="grow">{banner.title}</span>
+            <span class="badge" data-status={banner.is_active ? 'done' : 'cancelled'}>{banner.is_active ? 'ظاهر' : 'مخفي'}</span>
+          </summary>
+          <form class="stack" method="post" enctype="multipart/form-data">
+            <input type="hidden" name="action" value="banner" />
+            <input type="hidden" name="id" value={banner.id} />
+            <div class="field">
+              <label for={`title-${banner.id}`}>العنوان</label>
+              <input id={`title-${banner.id}`} name="title" type="text" value={banner.title} maxlength="80" required />
+            </div>
+            <div class="field">
+              <label for={`body-${banner.id}`}>الكلام (اختياري)</label>
+              <textarea id={`body-${banner.id}`} name="body" rows="2" maxlength="300">{banner.body}</textarea>
+            </div>
+            <div class="grid-2">
+              <div class="field">
+                <label for={`label-${banner.id}`}>كلمة الزرار (اختياري)</label>
+                <input id={`label-${banner.id}`} name="link_label" type="text" value={banner.link_label} maxlength="30" />
+              </div>
+              <div class="field">
+                <label for={`url-${banner.id}`}>لينك الزرار</label>
+                <input id={`url-${banner.id}`} class="ltr" name="link_url" type="text" value={banner.link_url} maxlength="300" placeholder="https://" />
+              </div>
+            </div>
+            <div class="grid-2">
+              <div class="field">
+                <label for={`image-${banner.id}`}>{banner.image_id ? 'غيّر الصورة' : 'صورة (اختياري)'}</label>
+                <input id={`image-${banner.id}`} name="image" type="file" accept="image/jpeg,image/png,image/webp" />
+              </div>
+              <div class="field">
+                <label for={`order-${banner.id}`}>الترتيب</label>
+                <input id={`order-${banner.id}`} name="sort_order" type="number" value={banner.sort_order} min="0" max="999" />
+              </div>
+            </div>
+            {
+              banner.image_id && (
+                <div class="row">
+                  <img class="shot" src={imageUrl(banner.image_id)} alt="صورة البانر الحالية" />
+                  <label class="small"><input type="checkbox" name="removeImage" /> شيل الصورة</label>
+                </div>
+              )
+            }
+            <label><input type="checkbox" name="is_active" checked={banner.is_active} /> ظاهر على الصفحة</label>
+            <div class="row">
+              <button class="btn btn--primary btn--sm" type="submit">حفظ</button>
+              <button class="btn btn--sm btn--danger" type="submit" name="delete" value="1" formnovalidate>مسح البانر</button>
+            </div>
+          </form>
+        </details>
+      ))
+    }
+
+    <form class="stack" method="post" enctype="multipart/form-data">
+      <input type="hidden" name="action" value="banner" />
+      <h3>بانر جديد</h3>
+      <div class="field">
+        <label for="new-title">العنوان</label>
+        <input id="new-title" name="title" type="text" maxlength="80" placeholder="مثال: خصم 20% لأول 10 عيادات" required />
+      </div>
+      <div class="field">
+        <label for="new-body">الكلام (اختياري)</label>
+        <textarea id="new-body" name="body" rows="2" maxlength="300"></textarea>
+      </div>
+      <div class="grid-2">
+        <div class="field">
+          <label for="new-label">كلمة الزرار (اختياري)</label>
+          <input id="new-label" name="link_label" type="text" maxlength="30" placeholder="مثال: احجز العرض" />
+        </div>
+        <div class="field">
+          <label for="new-url">لينك الزرار</label>
+          <input id="new-url" class="ltr" name="link_url" type="text" maxlength="300" placeholder="https://wa.me/201020183845" />
+        </div>
+      </div>
+      <div class="field">
+        <label for="new-image">صورة (اختياري)</label>
+        <input id="new-image" name="image" type="file" accept="image/jpeg,image/png,image/webp" />
+        <p class="hint">JPG أو PNG أو WebP، لحد 1.5 ميجا.</p>
+      </div>
+      <div><button class="btn btn--primary" type="submit"><Icon name="plus" />ضيف البانر</button></div>
+    </form>
+  </section>
+</Owner>
+
+<style>
+  .shot {
+    width: 9rem;
+    height: 5.5rem;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    object-fit: cover;
+  }
+
+  .fold {
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+  }
+
+  .fold summary {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    min-height: 44px;
+    padding: var(--s2) var(--s4);
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .fold form {
+    padding: var(--s4);
+    border-block-start: 1px solid var(--line);
+  }
+</style>

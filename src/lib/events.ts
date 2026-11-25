@@ -13,6 +13,7 @@ export const eventLabels = {
   password_reset: 'كلمة سر جديدة',
   dashboard_opened: 'دخول لوحة عميل',
   plan_saved: 'تعديل خطة',
+  site_changed: 'تعديل الصفحة الرئيسية',
   owner_signed_in: 'دخول لوحة المنصة',
 } as const;
 
