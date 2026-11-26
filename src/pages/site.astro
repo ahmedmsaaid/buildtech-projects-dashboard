@@ -86,6 +86,8 @@ if (Astro.request.method === 'POST') {
 
 const [settings, banners] = await Promise.all([getSiteSettings(), listBanners()]);
 const imageUrl = (id: string) => `${platformUrl}/media/${id}`;
+// What a visitor gets: the banners marked as showing, in their order.
+const showing = banners.filter((banner) => banner.is_active);
 ---
 
 <Owner title="الصفحة الرئيسية" subtitle="شكل وكلام أول صفحة الزائر بيشوفها، والبانرات اللي عليها">
@@ -145,6 +147,7 @@ const imageUrl = (id: string) => `${platformUrl}/media/${id}`;
     </form>
   </section>
 
+  <div class="board">
   <section class="card" aria-labelledby="banners-title">
     <h2 id="banners-title" class="card__title"><Icon name="note" />البانرات</h2>
     <p class="hint">البانر بيظهر تحت العنوان على طول: عرض، خبر، أو أي حاجة عايز الزائر يشوفها الأول.</p>
@@ -234,9 +237,172 @@ const imageUrl = (id: string) => `${platformUrl}/media/${id}`;
       <div><button class="btn btn--primary" type="submit"><Icon name="plus" />ضيف البانر</button></div>
     </form>
   </section>
+
+  {/* The banners as the visitor's phone shows them, so the owner need not open the site after every change. */}
+  <aside class="card board__side" aria-labelledby="preview-title">
+    <h2 id="preview-title" class="card__title"><Icon name="external" />معاينة البانرات</h2>
+    {
+      showing.length === 0 ? (
+        <p class="muted">مفيش بانر ظاهر دلوقتي. ضيف واحد أو علّم على «ظاهر على الصفحة».</p>
+      ) : (
+        <Fragment>
+          <div class="preview" style={`--green: ${settings.accent}`}>
+            <div class="preview__track" data-preview-track>
+              {showing.map((banner) => (
+                <article class="preview__banner">
+                  {banner.image_id && <img src={imageUrl(banner.image_id)} alt="" loading="lazy" />}
+                  <div class="preview__text">
+                    <h3>{banner.title}</h3>
+                    {banner.body && <p>{banner.body}</p>}
+                    {banner.link_label && banner.link_url && <span class="preview__button">{banner.link_label}</span>}
+                  </div>
+                </article>
+              ))}
+            </div>
+            {showing.length > 1 && (
+              <div class="preview__dots">
+                {showing.map((banner, index) => (
+                  <button type="button" data-preview-dot={index} aria-label={`اعرض: ${banner.title}`} aria-current={index === 0 ? 'true' : undefined} />
+                ))}
+              </div>
+            )}
+          </div>
+          <p class="hint">
+            {showing.length > 1 ? `${showing.length} بانرات ظاهرة. اسحب أو دوس على النقط، وعلى الموقع بتلف لوحدها.` : 'بانر واحد ظاهر.'}
+            {' '}ده شكلها على الموبايل؛ على الكمبيوتر الصورة بتبقى جنب الكلام.
+          </p>
+        </Fragment>
+      )
+    }
+  </aside>
+  </div>
 </Owner>
 
+<script>
+  // The preview's dots: move the row to a banner, and follow it when it is swiped.
+  const track = document.querySelector<HTMLElement>('[data-preview-track]');
+  const dots = [...document.querySelectorAll<HTMLButtonElement>('[data-preview-dot]')];
+  if (track && dots.length > 0) {
+    const slides = [...track.children] as HTMLElement[];
+    dots.forEach((dot, index) =>
+      dot.addEventListener('click', () => track.scrollTo({ left: slides[index].offsetLeft - (track.clientWidth - slides[index].offsetWidth) / 2, behavior: 'smooth' })),
+    );
+    const watcher = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          const now = slides.indexOf(entry.target as HTMLElement);
+          dots.forEach((dot, index) => (index === now ? dot.setAttribute('aria-current', 'true') : dot.removeAttribute('aria-current')));
+        }
+      },
+      { root: track, threshold: 0.6 },
+    );
+    slides.forEach((slide) => watcher.observe(slide));
+  }
+</script>
+
 <style>
+  /* The preview wears the site's own dark look, not the dashboard's. */
+  .preview {
+    display: grid;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    border-radius: var(--radius);
+    background: #101314;
+  }
+
+  .preview__track {
+    position: relative;
+    display: flex;
+    gap: 0.75rem;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: none;
+    border-radius: 0.75rem;
+  }
+
+  .preview__track::-webkit-scrollbar {
+    display: none;
+  }
+
+  .preview__banner {
+    flex: 0 0 100%;
+    overflow: hidden;
+    border: 1px solid var(--green);
+    border-radius: 0.75rem;
+    background: #181c1d;
+    color: #f3f6f4;
+    scroll-snap-align: center;
+  }
+
+  .preview__banner img {
+    display: block;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+  }
+
+  .preview__text {
+    display: grid;
+    justify-items: start;
+    gap: 0.5rem;
+    padding: 1rem;
+  }
+
+  .preview__text h3 {
+    margin: 0;
+    font-size: 1.05rem;
+    line-height: 1.4;
+  }
+
+  .preview__text p {
+    margin: 0;
+    color: #a3aba6;
+    font-size: 0.875rem;
+  }
+
+  .preview__button {
+    padding: 0.5rem 1rem;
+    border-radius: 0.5rem;
+    background: var(--green);
+    color: #101314;
+    font-size: 0.875rem;
+    font-weight: 700;
+  }
+
+  .preview__dots {
+    display: flex;
+    justify-content: center;
+    gap: 0.25rem;
+  }
+
+  .preview__dots button {
+    display: grid;
+    place-items: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+  }
+
+  .preview__dots button::before {
+    content: '';
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 999px;
+    background: #2c3335;
+    transition:
+      width 250ms,
+      background 250ms;
+  }
+
+  .preview__dots button[aria-current='true']::before {
+    width: 1.25rem;
+    background: var(--green);
+  }
+
   .shot {
     width: 9rem;
     height: 5.5rem;
