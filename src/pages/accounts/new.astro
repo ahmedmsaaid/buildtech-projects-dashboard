@@ -7,6 +7,7 @@
 import Icon from '../../components/Icon.astro';
 import Owner from '../../layouts/Owner.astro';
 import { recordEvent } from '../../lib/events';
+import { canCreateDatabases } from '../../lib/own-database';
 import { createAccount, listPlans } from '../../lib/platform';
 import { loadProducts, platformUrl } from '../../lib/products';
 import { nowIn } from '../../lib/time';
@@ -177,6 +178,13 @@ if (Astro.request.method === 'POST') {
             </div>
           </section>
 
+          <p class="hint">
+            {
+              canCreateDatabases
+                ? 'نيون متوصل: العميل هيتعمله قاعدة بيانات خاصة بيه تلقائي.'
+                : 'نيون مش متوصل (NEON_API_KEY مش واصل للوحة): العميل هيبدأ على القاعدة المشتركة، وتقدر تنقله بعدين من صفحته.'
+            }
+          </p>
           <div><button class="btn btn--primary" type="submit"><Icon name="plus" />اعمل العميل</button></div>
         </form>
       </>
