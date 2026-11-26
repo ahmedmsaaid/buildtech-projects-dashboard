@@ -12,8 +12,8 @@ import { callPlatform } from './products';
 
 const env = (name: string) => ((import.meta.env[name] as string | undefined) ?? process.env[name] ?? '').trim();
 const apiKey = env('NEON_API_KEY');
-/** Needed with a personal API key when the Neon account has more than one organization. */
-const organization = env('NEON_ORG_ID');
+/** Which Neon organization owns the databases. Left empty, the key's first organization is used. */
+const chosenOrganization = env('NEON_ORG_ID');
 /** Where new databases are made. The default is next to where Vercel runs the site. */
 const region = env('NEON_REGION') || 'aws-us-east-1';
 
@@ -40,19 +40,51 @@ interface CreatedProject {
   connection_uris?: { connection_uri?: string; connection_parameters?: { database?: string; role?: string; password?: string; host?: string; pooler_host?: string } }[];
 }
 
-async function createAtNeon(name: string): Promise<NewDatabase | 'refused' | 'unreachable'> {
+/**
+ * A personal API key must say which organization a new database belongs to.
+ * Asked of Neon once, so the owner does not have to look the id up.
+ */
+let foundOrganization: string | null = null;
+async function organizationId(): Promise<string | null> {
+  if (chosenOrganization) return chosenOrganization;
+  if (foundOrganization) return foundOrganization;
   try {
+    const response = await neon('/users/me/organizations', 'GET');
+    if (!response.ok) return null;
+    const { organizations } = (await response.json()) as { organizations?: { id?: string }[] };
+    foundOrganization = organizations?.[0]?.id ?? null;
+  } catch {
+    // Without it the request is still tried: an organization's own key needs none.
+  }
+  return foundOrganization;
+}
+
+/** What Neon said when it refused, in its own words: short, and with nothing secret in it. */
+async function refusal(response: Response): Promise<string> {
+  const body = await response.text();
+  let message = body;
+  try {
+    message = (JSON.parse(body) as { message?: string }).message ?? body;
+  } catch {
+    // Not JSON; the text itself will do.
+  }
+  return `${response.status} ${message}`.replace(/\s+/g, ' ').slice(0, 200);
+}
+
+async function createAtNeon(name: string): Promise<NewDatabase | { refused: string } | 'unreachable'> {
+  try {
+    const organization = await organizationId();
     const response = await neon('/projects', 'POST', { project: { name, region_id: region, ...(organization ? { org_id: organization } : {}) } });
     if (!response.ok) {
-      // The reason (a wrong key, the plan's limit) is worth having in the server log; it holds no secret.
-      console.error('Neon refused to create a database:', response.status, (await response.text()).slice(0, 300));
-      return 'refused';
+      const said = await refusal(response);
+      console.error('Neon refused to create a database:', said);
+      return { refused: said };
     }
     const created = (await response.json()) as CreatedProject;
     const ref = created.project?.id;
     const connection = created.connection_uris?.[0];
     const parts = connection?.connection_parameters;
-    if (!ref) return 'refused';
+    if (!ref) return { refused: 'no project id in the answer' };
 
     // The pooled address suits a site whose every request may open a connection.
     const host = parts?.pooler_host ?? parts?.host;
@@ -62,7 +94,7 @@ async function createAtNeon(name: string): Promise<NewDatabase | 'refused' | 'un
     if (connection?.connection_uri) return { ref, link: connection.connection_uri };
 
     await removeAtNeon(ref);
-    return 'refused';
+    return { refused: 'no connection details in the answer' };
   } catch {
     return 'unreachable';
   }
@@ -88,7 +120,12 @@ export async function discardDatabaseOf(accountId: string): Promise<void> {
 
 export type OwnDatabaseResult =
   | { ok: true; rows: number }
-  | { ok: false; reason: 'not_set_up' | 'neon_refused' | 'neon_unreachable' | 'platform_unreachable' | 'bad_link' | 'has_one' | 'is_demo' | 'database_unreachable' | 'failed' };
+  | {
+      ok: false;
+      reason: 'not_set_up' | 'neon_refused' | 'neon_unreachable' | 'platform_unreachable' | 'bad_link' | 'has_one' | 'is_demo' | 'database_unreachable' | 'failed';
+      /** Neon's own words when it refused. */
+      detail?: string;
+    };
 
 /** What to tell the owner for each way this can fail. */
 export const ownDatabaseProblems: Record<Exclude<OwnDatabaseResult, { ok: true }>['reason'], string> = {
@@ -103,6 +140,11 @@ export const ownDatabaseProblems: Record<Exclude<OwnDatabaseResult, { ok: true }
   failed: 'النقل ما كملش. بيانات العميل لسه في مكانها، جرّب تاني.',
 };
 
+/** The message for a failure, with Neon's own reason after it when there is one. */
+export function ownDatabaseProblem(result: Exclude<OwnDatabaseResult, { ok: true }>): string {
+  return result.detail ? `${ownDatabaseProblems[result.reason]} (${result.detail})` : ownDatabaseProblems[result.reason];
+}
+
 /**
  * Gives an account a database of its own. With no `pastedLink` a new one is
  * made at Neon; it is removed again if the customer's records could not be
@@ -114,8 +156,8 @@ export async function giveOwnDatabase(account: { id: string; slug: string }, pas
   else {
     if (!canCreateDatabases) return { ok: false, reason: 'not_set_up' };
     const created = await createAtNeon(`bt-${account.slug}`);
-    if (created === 'refused') return { ok: false, reason: 'neon_refused' };
     if (created === 'unreachable') return { ok: false, reason: 'neon_unreachable' };
+    if ('refused' in created) return { ok: false, reason: 'neon_refused', detail: created.refused };
     database = created;
   }
 

@@ -8,10 +8,12 @@ import Icon from '../../components/Icon.astro';
 import Owner from '../../layouts/Owner.astro';
 import { recordEvent } from '../../lib/events';
 import { canCreateDatabases } from '../../lib/own-database';
+import { canManageAddresses } from '../../lib/own-link';
 import { createAccount, listPlans } from '../../lib/platform';
 import { loadProducts, platformUrl } from '../../lib/products';
+import { getTrialDays, MAX_TRIAL_DAYS } from '../../lib/settings';
 import { nowIn } from '../../lib/time';
-import { egyptianMobile, text } from '../../lib/validate';
+import { egyptianMobile, text, wholeNumber } from '../../lib/validate';
 
 /** Addresses that already mean something on the site. */
 const { owner } = Astro.locals;
@@ -23,12 +25,12 @@ const RESERVED_SLUGS = ['admin', 'owner', 'api', 'demo', 'try', 'media', 'site',
 
 // The product comes from the address, so choosing another one reloads the right questions and plans.
 const product = products[Astro.url.searchParams.get('product') ?? ''] ?? productList[0];
-const plans = await listPlans({ product: product.key });
+const [plans, defaultTrialDays] = [await listPlans({ product: product.key }), await getTrialDays()];
 
 const problems: string[] = [];
-let typed = { name: '', slug: '', contactName: '', contactPhone: '', staffEmail: '', planId: '' };
+let typed = { name: '', slug: '', contactName: '', contactPhone: '', staffEmail: '', planId: '', trialDays: '' };
 let answers: Record<string, string> = {};
-let created: { accountId: string; password: string; ownDatabase: boolean } | null = null;
+let created: Extract<Awaited<ReturnType<typeof createAccount>>, { ok: true }> | null = null;
 
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
@@ -39,7 +41,11 @@ if (Astro.request.method === 'POST') {
     contactPhone: text(form, 'contact_phone', 20),
     staffEmail: text(form, 'staff_email', 120).toLowerCase(),
     planId: text(form, 'plan_id', 40),
+    trialDays: text(form, 'trial_days', 4),
   };
+  // Left empty, the customer gets the trial length set for everyone.
+  const trialDays = typed.trialDays === '' ? null : wholeNumber(form, 'trial_days', 0, MAX_TRIAL_DAYS);
+  if (typed.trialDays !== '' && trialDays === null) problems.push(`فترة التجربة لازم تكون رقم من 0 لـ ${MAX_TRIAL_DAYS}.`);
   answers = Object.fromEntries(product.setupFields.map((field) => [field.name, text(form, field.name, 80)]));
   const mobile = typed.contactPhone ? egyptianMobile(typed.contactPhone) : '';
 
@@ -52,7 +58,7 @@ if (Astro.request.method === 'POST') {
 
   if (problems.length === 0 && mobile !== null) {
     const result = await createAccount(
-      { product: product.key, ...typed, contactPhone: mobile, planId: typed.planId || null, answers },
+      { product: product.key, ...typed, contactPhone: mobile, planId: typed.planId || null, trialDays, answers },
       nowIn('Africa/Cairo').day,
     );
     if (result.ok) {
@@ -73,7 +79,7 @@ if (Astro.request.method === 'POST') {
 }
 ---
 
-<Owner title="عميل جديد" subtitle="العميل بيتعمل جاهز للشغل، وبيبدأ بـ 14 يوم تجربة">
+<Owner title="عميل جديد" subtitle="العميل بيتعمل جاهز للشغل، بلينك وقاعدة بيانات خاصين بيه">
   <a slot="actions" class="btn btn--sm btn--ghost" href="/">كل العملاء</a>
 
   {
@@ -83,21 +89,31 @@ if (Astro.request.method === 'POST') {
         <p>ابعت البيانات دي للعميل. <strong>كلمة السر مش هتظهر تاني</strong>، ولو ضاعت تقدر تعمل واحدة جديدة من صفحة العميل.</p>
         <dl class="facts">
           <dt>الصفحة العامة</dt>
-          <dd class="ltr">{`${platformUrl}/${typed.slug}`}</dd>
+          <dd class="ltr">{created.ownLink ? `https://${created.ownLink}` : `${platformUrl}/${typed.slug}`}</dd>
           <dt>صفحة الدخول</dt>
-          <dd class="ltr">{`${platformUrl}/login`}</dd>
+          <dd class="ltr">{created.ownLink ? `https://${created.ownLink}/login` : `${platformUrl}/login`}</dd>
           <dt>الإيميل</dt>
           <dd class="ltr">{typed.staffEmail}</dd>
           <dt>كلمة السر</dt>
           <dd class="ltr">{created.password}</dd>
         </dl>
-        <p class="hint">
-          {
-            created.ownDatabase
-              ? 'العميل ليه قاعدة بيانات خاصة بيه من أول لحظة.'
-              : 'العميل بدأ على القاعدة المشتركة. تقدر تعمله قاعدة خاصة من صفحته.'
-          }
-        </p>
+        <ul class="checks">
+          <li data-ok={created.ownLink ? 'yes' : 'no'}>
+            {created.ownLink
+              ? 'لينك فيرسيل خاص بيه اتعمل. ممكن ياخد دقيقة لحد ما يفتح.'
+              : created.linkProblem === 'not_connected'
+                ? 'اللينك الخاص ما اتعملش: اللوحة مش متوصلة بفيرسيل (VERCEL_TOKEN و VERCEL_PROJECT مش واصلين). العميل شغال على لينك المنصة.'
+                : 'اللينك الخاص ما اتعملش: فيرسيل رفض أو الاسم مأخود. جرّب اسم تاني من صفحة العميل.'}
+          </li>
+          <li data-ok={created.ownDatabase ? 'yes' : 'no'}>
+            {created.ownDatabase
+              ? 'قاعدة بيانات خاصة بيه اتعملت.'
+              : created.databaseProblem
+                ? `القاعدة الخاصة ما اتعملتش: ${created.databaseProblem} العميل شغال على القاعدة المشتركة، وتقدر تجرّب تاني من صفحته.`
+                : 'القاعدة الخاصة ما اتعملتش: اللوحة مش متوصلة بنيون (NEON_API_KEY مش واصل). العميل شغال على القاعدة المشتركة.'}
+          </li>
+          <li data-ok="yes">{created.trialDays > 0 ? `فترة التجربة: ${created.trialDays} يوم.` : 'من غير فترة تجربة.'}</li>
+        </ul>
         <div class="row">
           <a class="btn btn--primary" href={`/accounts/${created.accountId}`}>افتح صفحة العميل</a>
           <a class="btn" href={`/accounts/new?product=${product.key}`}>ضيف عميل تاني</a>
@@ -174,20 +190,61 @@ if (Astro.request.method === 'POST') {
                 <option value="">لسه ما اختارش</option>
                 {plans.map((plan) => <option value={plan.id} selected={plan.id === typed.planId}>{plan.name} · {plan.price} ج</option>)}
               </select>
-              <p class="hint">التجربة 14 يوم في كل الأحوال. الأسعار بتتعدّل من صفحة <a href="/plans">الخطط</a>.</p>
+              <p class="hint">الأسعار بتتعدّل من صفحة <a href="/plans">الخطط</a>.</p>
+            </div>
+            <div class="field">
+              <label for="trial_days">فترة التجربة بالأيام (اختياري)</label>
+              <input id="trial_days" name="trial_days" type="number" value={typed.trialDays} min="0" max={MAX_TRIAL_DAYS} placeholder={String(defaultTrialDays)} />
+              <p class="hint">سيبها فاضية ياخد الافتراضي ({defaultTrialDays} يوم) اللي في صفحة <a href="/plans">الخطط</a>. 0 معناها من غير تجربة.</p>
             </div>
           </section>
 
-          <p class="hint">
-            {
-              canCreateDatabases
-                ? 'نيون متوصل: العميل هيتعمله قاعدة بيانات خاصة بيه تلقائي.'
-                : 'نيون مش متوصل (NEON_API_KEY مش واصل للوحة): العميل هيبدأ على القاعدة المشتركة، وتقدر تنقله بعدين من صفحته.'
-            }
-          </p>
+          <ul class="checks">
+            <li data-ok={canManageAddresses ? 'yes' : 'no'}>
+              {canManageAddresses ? 'فيرسيل متوصل: العميل هيتعمله لينك خاص بيه تلقائي.' : 'فيرسيل مش متوصل (VERCEL_TOKEN و VERCEL_PROJECT مش واصلين للوحة): العميل هيشتغل على لينك المنصة.'}
+            </li>
+            <li data-ok={canCreateDatabases ? 'yes' : 'no'}>
+              {canCreateDatabases ? 'نيون متوصل: العميل هيتعمله قاعدة بيانات خاصة بيه تلقائي.' : 'نيون مش متوصل (NEON_API_KEY مش واصل للوحة): العميل هيبدأ على القاعدة المشتركة.'}
+            </li>
+          </ul>
           <div><button class="btn btn--primary" type="submit"><Icon name="plus" />اعمل العميل</button></div>
         </form>
       </>
     )
   }
 </Owner>
+
+<style>
+  /* What was set up for the customer and what was not, one line each. */
+  .checks {
+    display: grid;
+    gap: var(--s2);
+    margin: 0;
+    padding: 0;
+    font-size: 0.9rem;
+    list-style: none;
+  }
+
+  .checks li {
+    display: flex;
+    gap: var(--s2);
+  }
+
+  .checks li::before {
+    flex: none;
+    font-weight: 700;
+  }
+
+  .checks [data-ok='yes']::before {
+    content: '✓';
+    color: var(--ok);
+  }
+
+  .checks [data-ok='no'] {
+    color: var(--bad);
+  }
+
+  .checks [data-ok='no']::before {
+    content: '!';
+  }
+</style>

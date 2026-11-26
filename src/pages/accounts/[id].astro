@@ -22,7 +22,7 @@ import {
   subscriptionState,
   updateSubscription,
 } from '../../lib/platform';
-import { canCreateDatabases, giveOwnDatabase, ownDatabaseProblems } from '../../lib/own-database';
+import { canCreateDatabases, giveOwnDatabase, ownDatabaseProblem } from '../../lib/own-database';
 import { canManageAddresses, removeOwnLink, setOwnLink, toAddress } from '../../lib/own-link';
 import { fallbackProduct, loadProducts, platformUrl } from '../../lib/products';
 import { addDays, formatDay, formatMoment, formatShortDay, isDay, nowIn } from '../../lib/time';
@@ -129,7 +129,7 @@ if (Astro.request.method === 'POST') {
       await recordEvent({ actor: owner.email, action: 'database_given', account: subject });
       return Astro.redirect(`${here}?moved`);
     }
-    problems.push(ownDatabaseProblems[result.reason]);
+    problems.push(ownDatabaseProblem(result));
   }
 
   if (action === 'remove-link' && account.domain) {

@@ -9,6 +9,7 @@ import Owner from '../layouts/Owner.astro';
 import { recordEvent } from '../lib/events';
 import { listPlans, savePlan } from '../lib/platform';
 import { loadProducts } from '../lib/products';
+import { getTrialDays, MAX_TRIAL_DAYS, setTrialDays } from '../lib/settings';
 import { text, wholeNumber } from '../lib/validate';
 
 const { owner } = Astro.locals;
@@ -18,18 +19,31 @@ let saved = Astro.url.searchParams.has('saved');
 
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
+
+  // The trial length has a form of its own, with just this one field.
+  if (form.has('trial_days')) {
+    const days = wholeNumber(form, 'trial_days', 0, MAX_TRIAL_DAYS);
+    if (days !== null) {
+      await setTrialDays(days);
+      await recordEvent({ actor: owner.email, action: 'plan_saved', detail: `فترة التجربة: ${days} يوم` });
+      return Astro.redirect('/plans?saved');
+    }
+    problems.push(`فترة التجربة لازم تكون رقم من 0 لـ ${MAX_TRIAL_DAYS}.`);
+  }
+
   const id = text(form, 'id', 40);
   const product = text(form, 'product', 20);
   const name = text(form, 'name', 40);
   const months = wholeNumber(form, 'months', 1, 36);
   const price = wholeNumber(form, 'price', 0, 1_000_000);
 
-  if (!products[product]) problems.push('المنتج ده مش موجود.');
-  if (!name) problems.push('اسم الخطة مطلوب.');
-  if (months === null) problems.push('عدد الشهور لازم يكون من 1 لـ 36.');
-  if (price === null) problems.push('السعر لازم يكون رقم.');
+  const isPlan = !form.has('trial_days');
+  if (isPlan && !products[product]) problems.push('المنتج ده مش موجود.');
+  if (isPlan && !name) problems.push('اسم الخطة مطلوب.');
+  if (isPlan && months === null) problems.push('عدد الشهور لازم يكون من 1 لـ 36.');
+  if (isPlan && price === null) problems.push('السعر لازم يكون رقم.');
 
-  if (problems.length === 0 && months !== null && price !== null) {
+  if (isPlan && problems.length === 0 && months !== null && price !== null) {
     // A new plan starts active; an existing one follows its checkbox.
     await savePlan({ id: id || undefined, product, name, months, price, is_active: id ? form.has('is_active') : true });
     await recordEvent({ actor: owner.email, action: 'plan_saved', detail: `${products[product].customers} · ${name} · ${price} ج` });
@@ -38,7 +52,7 @@ if (Astro.request.method === 'POST') {
   saved = false;
 }
 
-const plans = await listPlans({ includeRetired: true });
+const [plans, trialDays] = [await listPlans({ includeRetired: true }), await getTrialDays()];
 ---
 
 <Owner title="الخطط" subtitle="الاشتراكات والأسعار اللي بتعرضها لكل منتج">
@@ -51,6 +65,16 @@ const plans = await listPlans({ includeRetired: true });
       </div>
     )
   }
+
+  <section class="card" aria-labelledby="trial-title">
+    <h2 id="trial-title" class="card__title"><Icon name="wallet" />فترة التجربة</h2>
+    <form class="row" method="post">
+      <label for="trial_days">عدد أيام التجربة لأي عميل جديد</label>
+      <input id="trial_days" class="auto" name="trial_days" type="number" value={trialDays} min="0" max={MAX_TRIAL_DAYS} required />
+      <button class="btn btn--sm btn--primary" type="submit">حفظ</button>
+    </form>
+    <p class="hint">ده الرقم الافتراضي. وإنت بتضيف عميل تقدر تكتبله رقم مختلف، و0 معناها من غير تجربة.</p>
+  </section>
 
   {
     productList.map((product) => (

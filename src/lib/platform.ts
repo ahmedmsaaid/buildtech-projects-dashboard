@@ -7,12 +7,11 @@ import { randomBytes } from 'node:crypto';
 import { ACCOUNT_COLUMNS, type Account } from './accounts';
 import { newId, query } from './db';
 import { generatePassword, hashPassword, hashToken } from './passwords';
-import { canCreateDatabases, discardDatabaseOf, giveOwnDatabase } from './own-database';
+import { canCreateDatabases, discardDatabaseOf, giveOwnDatabase, ownDatabaseProblem } from './own-database';
+import { canManageAddresses, setOwnLink } from './own-link';
 import { fetchUsage, loadProducts, setUpAccount } from './products';
+import { getTrialDays } from './settings';
 import { addDays, addMonths, daysBetween } from './time';
-
-/** How long a new account may try a product before it has to pay. */
-const TRIAL_DAYS = 14;
 
 // ---------------------------------------------------------------------------
 // Plans
@@ -125,12 +124,27 @@ export interface NewAccount {
   staffEmail: string;
   /** Null starts the account on the free trial with no plan chosen yet. */
   planId: string | null;
+  /** Days of free trial for this customer. Null takes the number set for everyone (settings.ts). */
+  trialDays: number | null;
   /** The product's own setup questions, by field name. */
   answers: Record<string, string>;
 }
 
 export type CreateAccountResult =
-  | { ok: true; accountId: string; password: string; /** False when a database of the customer's own could not be made; they start in the shared one. */ ownDatabase: boolean }
+  | {
+      ok: true;
+      accountId: string;
+      password: string;
+      trialDays: number;
+      /** False when a database of the customer's own could not be made; they start in the shared one. */
+      ownDatabase: boolean;
+      /** Why not, when it was tried and failed. */
+      databaseProblem: string | null;
+      /** The customer's own web address, or null when none was made. */
+      ownLink: string | null;
+      /** True when that address still needs a moment or a step before it opens. */
+      linkProblem: 'not_connected' | 'failed' | null;
+    }
   | { ok: false; reason: 'slug_taken' | 'email_taken' | 'unknown_product' | 'unknown_plan' | 'platform_unreachable' };
 
 /**
@@ -152,14 +166,15 @@ export async function createAccount(input: NewAccount, today: string): Promise<C
 
   const accountId = newId();
   const password = generatePassword();
+  const trialDays = input.trialDays ?? (await getTrialDays());
 
   await query(
     `insert into accounts (id, product, slug, name, plan_id, price, period_months, paid_until, contact_name, contact_phone)
      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-    [accountId, product.key, input.slug, input.name, plan?.id ?? null, plan?.price ?? 0, plan?.months ?? 1, addDays(today, TRIAL_DAYS), input.contactName, input.contactPhone],
+    [accountId, product.key, input.slug, input.name, plan?.id ?? null, plan?.price ?? 0, plan?.months ?? 1, addDays(today, trialDays), input.contactName, input.contactPhone],
   );
   // The customer's database comes first, so their very first records are written into it.
-  const ownDatabase = canCreateDatabases && (await giveOwnDatabase({ id: accountId, slug: input.slug })).ok;
+  const database = canCreateDatabases ? await giveOwnDatabase({ id: accountId, slug: input.slug }) : null;
 
   // Only the platform knows what a clinic or a restaurant needs to start with.
   // If it cannot be reached, the half-made account is removed rather than left unusable.
@@ -176,7 +191,32 @@ export async function createAccount(input: NewAccount, today: string): Promise<C
     input.contactName,
   ]);
 
-  return { ok: true, accountId, password, ownDatabase };
+  // An address of the customer's own, named after their slug. If someone else
+  // on Vercel already has that name, one more is tried before giving up.
+  let ownLink: string | null = null;
+  let linkProblem: 'not_connected' | 'failed' | null = canManageAddresses ? 'failed' : 'not_connected';
+  if (canManageAddresses) {
+    for (const name of [input.slug, `${input.slug}-bt`]) {
+      const link = await setOwnLink(accountId, `${name}.vercel.app`, null);
+      if (link.ok) {
+        ownLink = link.address;
+        linkProblem = null;
+        break;
+      }
+      if (link.reason !== 'taken_elsewhere') break;
+    }
+  }
+
+  return {
+    ok: true,
+    accountId,
+    password,
+    trialDays,
+    ownDatabase: database?.ok === true,
+    databaseProblem: database && !database.ok ? ownDatabaseProblem(database) : null,
+    ownLink,
+    linkProblem,
+  };
 }
 
 export async function setAccountStatus(accountId: string, status: Account['status']): Promise<void> {
