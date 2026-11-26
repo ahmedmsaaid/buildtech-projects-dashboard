@@ -23,13 +23,13 @@ export interface ProductInfo {
 export const platformUrl = (import.meta.env.PLATFORM_URL ?? process.env.PLATFORM_URL ?? '').trim().replace(/\/+$/, '');
 const secret = (import.meta.env.INTERNAL_API_SECRET ?? process.env.INTERNAL_API_SECRET ?? '').trim();
 
-async function callPlatform(route: string, init: RequestInit = {}): Promise<Response | null> {
+export async function callPlatform(route: string, init: RequestInit = {}, timeoutMs = 10_000): Promise<Response | null> {
   if (!platformUrl || !secret) return null;
   try {
     return await fetch(`${platformUrl}/internal/${route}`, {
       ...init,
       headers: { ...init.headers, Authorization: `Bearer ${secret}` },
-      signal: AbortSignal.timeout(10_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch {
     return null;

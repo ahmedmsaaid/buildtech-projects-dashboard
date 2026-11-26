@@ -22,6 +22,7 @@ import {
   subscriptionState,
   updateSubscription,
 } from '../../lib/platform';
+import { canCreateDatabases, giveOwnDatabase, ownDatabaseProblems } from '../../lib/own-database';
 import { canManageAddresses, removeOwnLink, setOwnLink, toAddress } from '../../lib/own-link';
 import { fallbackProduct, loadProducts, platformUrl } from '../../lib/products';
 import { addDays, formatDay, formatMoment, formatShortDay, isDay, nowIn } from '../../lib/time';
@@ -40,6 +41,8 @@ let newPassword: { email: string; password: string } | null = null;
 let saved = Astro.url.searchParams.has('saved');
 // Set right after an address was given, to say what is left to do, if anything.
 const linked = Astro.url.searchParams.get('linked');
+// Set right after the customer's records were moved to a database of their own.
+const moved = Astro.url.searchParams.has('moved');
 
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
@@ -119,6 +122,16 @@ if (Astro.request.method === 'POST') {
     }
   }
 
+  // With a pasted link the database is one the owner made by hand; without, a new one is made at Neon.
+  if (action === 'own-database') {
+    const result = await giveOwnDatabase(account, text(form, 'link', 600));
+    if (result.ok) {
+      await recordEvent({ actor: owner.email, action: 'database_given', account: subject });
+      return Astro.redirect(`${here}?moved`);
+    }
+    problems.push(ownDatabaseProblems[result.reason]);
+  }
+
   if (action === 'remove-link' && account.domain) {
     await removeOwnLink(account.id, account.domain);
     await recordEvent({ actor: owner.email, action: 'link_changed', account: subject, detail: `اتشال: ${account.domain}` });
@@ -168,6 +181,7 @@ const offeredPlans = plans.filter((plan) => plan.is_active || plan.id === accoun
   </Fragment>
 
   {saved && <p class="notice" role="status"><Icon name="check" />اتحفظ.</p>}
+  {moved && <p class="notice" role="status"><Icon name="check" />العميل بقى ليه قاعدة بيانات خاصة، وكل بياناته اتنقلت ليها.</p>}
   {linked === 'ready' && <p class="notice" role="status"><Icon name="check" />اللينك الخاص اتعمل. ممكن ياخد دقيقة لحد ما يفتح.</p>}
   {linked === 'dns' && <p class="notice" role="status"><Icon name="check" />الدومين اتضاف على فيرسيل. لسه محتاج تظبط الـ DNS بتاعه من صفحة Domains في فيرسيل عشان يفتح.</p>}
   {
@@ -362,6 +376,47 @@ const offeredPlans = plans.filter((plan) => plan.is_active || plan.id === accoun
         {!canManageAddresses && <p class="hint">اللوحة لسه مش متوصلة بفيرسيل، فبعد الحفظ هتضيف اللينك في فيرسيل بإيدك.</p>}
       </section>
 
+      <section class="card" aria-labelledby="database-title">
+        <h2 id="database-title" class="card__title"><Icon name="building" />قاعدة البيانات</h2>
+        {
+          account.has_own_database ? (
+            <Fragment>
+              <p><span class="badge" data-status="done">قاعدة خاصة بالعميل</span></p>
+              <p class="hint">
+                حجوزاته وأوردراته وبيانات زباينه في قاعدة لوحده، مفيش منها حاجة في القاعدة المشتركة.
+                {account.database_ref && <Fragment> اسمها على نيون: <span class="ltr">{account.database_ref}</span></Fragment>}
+              </p>
+            </Fragment>
+          ) : (
+            <Fragment>
+              <p><span class="badge" data-status="arrived">على القاعدة المشتركة</span></p>
+              <p class="hint">اعمله قاعدة لوحده، وكل بياناته الحالية هتتنقل ليها. العميل مش هيحس بحاجة.</p>
+              {
+                canCreateDatabases && (
+                  <form method="post">
+                    <input type="hidden" name="_action" value="own-database" />
+                    <button class="btn btn--primary btn--block" type="submit">اعمل قاعدة بيانات خاصة</button>
+                  </form>
+                )
+              }
+              <details class="fold">
+                <summary>{canCreateDatabases ? 'أو حط لينك قاعدة جاهزة' : 'حط لينك قاعدة جاهزة'}</summary>
+                <form class="stack" method="post">
+                  <input type="hidden" name="_action" value="own-database" />
+                  <div class="field">
+                    <label for="database-link">لينك قاعدة Postgres</label>
+                    <input id="database-link" class="ltr" name="link" type="password" maxlength="600" autocomplete="off" placeholder="postgresql://..." required />
+                    <p class="hint">اللينك بيتحفظ مشفّر ومش بيظهر تاني.</p>
+                  </div>
+                  <button class="btn btn--block" type="submit">انقل البيانات للقاعدة دي</button>
+                </form>
+              </details>
+              {!canCreateDatabases && <p class="hint">اللوحة لسه مش متوصلة بنيون، فالزرار التلقائي مش ظاهر.</p>}
+            </Fragment>
+          )
+        }
+      </section>
+
       <section class="card" aria-labelledby="staff-title">
         <h2 id="staff-title" class="card__title"><Icon name="users" />حسابات الدخول</h2>
         <ul class="queue">
@@ -402,3 +457,16 @@ const offeredPlans = plans.filter((plan) => plan.is_active || plan.id === accoun
     </div>
   </div>
 </Owner>
+
+<style>
+  .fold summary {
+    min-height: 44px;
+    color: var(--muted);
+    font-size: 0.9rem;
+    cursor: pointer;
+  }
+
+  .fold form {
+    padding-block-start: var(--s3);
+  }
+</style>

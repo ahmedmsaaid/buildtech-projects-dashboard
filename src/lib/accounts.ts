@@ -20,10 +20,15 @@ export interface Account {
   owner_note: string;
   /** The customer's own web address, or null when they only have the shared one. */
   domain: string | null;
+  /** True when the customer's records are in a database of their own (see own-database.ts). */
+  has_own_database: boolean;
+  /** That database's id at Neon, or null for one made by hand. */
+  database_ref: string | null;
 }
 
 export const ACCOUNT_COLUMNS = `accounts.id, accounts.product, accounts.slug, accounts.name, accounts.status, accounts.plan_id, accounts.price,
-  accounts.period_months, accounts.paid_until, accounts.contact_name, accounts.contact_phone, accounts.owner_note, accounts.domain`;
+  accounts.period_months, accounts.paid_until, accounts.contact_name, accounts.contact_phone, accounts.owner_note, accounts.domain,
+  accounts.database_url is not null as has_own_database, accounts.database_ref`;
 
 export async function getAccountById(id: string): Promise<Account | null> {
   const [account] = await query<Account>(`select ${ACCOUNT_COLUMNS} from accounts where id = $1`, [id]);

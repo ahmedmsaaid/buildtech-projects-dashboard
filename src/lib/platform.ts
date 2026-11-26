@@ -7,6 +7,7 @@ import { randomBytes } from 'node:crypto';
 import { ACCOUNT_COLUMNS, type Account } from './accounts';
 import { newId, query } from './db';
 import { generatePassword, hashPassword, hashToken } from './passwords';
+import { canCreateDatabases, discardDatabaseOf, giveOwnDatabase } from './own-database';
 import { fetchUsage, loadProducts, setUpAccount } from './products';
 import { addDays, addMonths, daysBetween } from './time';
 
@@ -129,7 +130,7 @@ export interface NewAccount {
 }
 
 export type CreateAccountResult =
-  | { ok: true; accountId: string; password: string }
+  | { ok: true; accountId: string; password: string; /** False when a database of the customer's own could not be made; they start in the shared one. */ ownDatabase: boolean }
   | { ok: false; reason: 'slug_taken' | 'email_taken' | 'unknown_product' | 'unknown_plan' | 'platform_unreachable' };
 
 /**
@@ -157,9 +158,13 @@ export async function createAccount(input: NewAccount, today: string): Promise<C
      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
     [accountId, product.key, input.slug, input.name, plan?.id ?? null, plan?.price ?? 0, plan?.months ?? 1, addDays(today, TRIAL_DAYS), input.contactName, input.contactPhone],
   );
+  // The customer's database comes first, so their very first records are written into it.
+  const ownDatabase = canCreateDatabases && (await giveOwnDatabase({ id: accountId, slug: input.slug })).ok;
+
   // Only the platform knows what a clinic or a restaurant needs to start with.
   // If it cannot be reached, the half-made account is removed rather than left unusable.
   if (!(await setUpAccount(accountId, input.answers))) {
+    await discardDatabaseOf(accountId);
     await query('delete from accounts where id = $1', [accountId]);
     return { ok: false, reason: 'platform_unreachable' };
   }
@@ -171,7 +176,7 @@ export async function createAccount(input: NewAccount, today: string): Promise<C
     input.contactName,
   ]);
 
-  return { ok: true, accountId, password };
+  return { ok: true, accountId, password, ownDatabase };
 }
 
 export async function setAccountStatus(accountId: string, status: Account['status']): Promise<void> {

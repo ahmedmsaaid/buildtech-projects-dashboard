@@ -27,7 +27,7 @@ const plans = await listPlans({ product: product.key });
 const problems: string[] = [];
 let typed = { name: '', slug: '', contactName: '', contactPhone: '', staffEmail: '', planId: '' };
 let answers: Record<string, string> = {};
-let created: { accountId: string; password: string } | null = null;
+let created: { accountId: string; password: string; ownDatabase: boolean } | null = null;
 
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
@@ -90,6 +90,13 @@ if (Astro.request.method === 'POST') {
           <dt>كلمة السر</dt>
           <dd class="ltr">{created.password}</dd>
         </dl>
+        <p class="hint">
+          {
+            created.ownDatabase
+              ? 'العميل ليه قاعدة بيانات خاصة بيه من أول لحظة.'
+              : 'العميل بدأ على القاعدة المشتركة. تقدر تعمله قاعدة خاصة من صفحته.'
+          }
+        </p>
         <div class="row">
           <a class="btn btn--primary" href={`/accounts/${created.accountId}`}>افتح صفحة العميل</a>
           <a class="btn" href={`/accounts/new?product=${product.key}`}>ضيف عميل تاني</a>
