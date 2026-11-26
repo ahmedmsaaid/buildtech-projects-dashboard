@@ -183,10 +183,10 @@ const offeredPlans = plans.filter((plan) => plan.is_active || plan.id === accoun
   {saved && <p class="notice" role="status"><Icon name="check" />اتحفظ.</p>}
   {moved && <p class="notice" role="status"><Icon name="check" />العميل بقى ليه قاعدة بيانات خاصة، وكل بياناته اتنقلت ليها.</p>}
   {linked === 'ready' && <p class="notice" role="status"><Icon name="check" />اللينك الخاص اتعمل. ممكن ياخد دقيقة لحد ما يفتح.</p>}
-  {linked === 'dns' && <p class="notice" role="status"><Icon name="check" />الدومين اتضاف على فيرسيل. لسه محتاج تظبط الـ DNS بتاعه من صفحة Domains في فيرسيل عشان يفتح.</p>}
+  {linked === 'dns' && <p class="notice" role="status" data-stay><Icon name="check" />الدومين اتضاف على فيرسيل. لسه محتاج تظبط الـ DNS بتاعه من صفحة Domains في فيرسيل عشان يفتح.</p>}
   {
     linked === 'manual' && account.domain && (
-      <p class="notice" role="status">
+      <p class="notice" role="status" data-stay>
         <Icon name="check" />
         اللينك اتحفظ. فاضل خطوة: افتح مشروع المنصة على فيرسيل ← Settings ← Domains وضيف <strong class="ltr">{account.domain}</strong>
       </p>

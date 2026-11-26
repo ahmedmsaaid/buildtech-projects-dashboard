@@ -2039,3 +2039,202 @@ body[data-density='compact'] {
 .qr strong {
   font-size: 1.1rem;
 }
+
+/* ---------- Feedback: busy buttons and toasts (scripts/feedback.ts) ---------- */
+
+/* A pressed button keeps its size and shows a spinner where its label was. */
+button[data-loading] {
+  position: relative;
+  color: transparent !important;
+  pointer-events: none;
+}
+
+button[data-loading] > * {
+  opacity: 0;
+}
+
+button[data-loading]::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 1.2em;
+  height: 1.2em;
+  margin: auto;
+  border: 0.16em solid color-mix(in srgb, var(--spin, #ffffff) 25%, transparent);
+  border-block-start-color: var(--spin, #ffffff);
+  border-radius: 50%;
+  animation: spin 700ms linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Toasts sit above everything, at the top where a thumb does not cover them. */
+.toasts {
+  position: fixed;
+  z-index: 1000;
+  inset-block-start: max(1rem, env(safe-area-inset-top));
+  inset-inline: 0;
+  display: grid;
+  justify-items: center;
+  gap: 0.625rem;
+  padding-inline: 1rem;
+  pointer-events: none;
+}
+
+/* Colors are fixed, not the page's: a toast looks the same on a customer's themed page and on the dark sign-in. */
+.toast {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0.75rem;
+  width: min(100%, 26rem);
+  padding: 0.875rem 1rem 1rem;
+  overflow: hidden;
+  border: 1px solid rgb(15 23 42 / 8%);
+  border-radius: 1rem;
+  background: #ffffff;
+  box-shadow:
+    0 1px 2px rgb(15 23 42 / 8%),
+    0 18px 40px -12px rgb(15 23 42 / 35%);
+  color: #0f172a;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  line-height: 1.6;
+  text-align: start;
+  pointer-events: auto;
+  animation: toast-in 380ms cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+}
+
+.toast.is-leaving {
+  animation: toast-out 220ms ease-in forwards;
+}
+
+.toast__icon {
+  display: grid;
+  place-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 50%;
+  background: #16a34a;
+  color: #ffffff;
+  animation: toast-pop 420ms cubic-bezier(0.2, 0.9, 0.3, 1.4) 80ms both;
+}
+
+.toast--error .toast__icon {
+  background: #dc2626;
+}
+
+/* The tick draws itself. */
+.toast__draw {
+  stroke-dasharray: 40;
+  stroke-dashoffset: 40;
+  animation: toast-draw 360ms ease-out 260ms forwards;
+}
+
+.toast__body {
+  padding-block-start: 0.0625rem;
+}
+
+.toast__body ul {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0;
+  padding-inline-start: 1.1rem;
+}
+
+.toast__close {
+  display: grid;
+  place-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+}
+
+.toast__close:hover,
+.toast__close:focus-visible {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.toast__bar {
+  position: absolute;
+  inset-inline: 0;
+  inset-block-end: 0;
+  height: 3px;
+  background: #16a34a;
+  transform-origin: left;
+  animation: toast-life linear forwards;
+}
+
+.toast--error .toast__bar {
+  background: #dc2626;
+}
+
+/* Resting on a toast gives time to read it. */
+.toast:hover .toast__bar,
+.toast:focus-within .toast__bar {
+  animation-play-state: paused;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-1.25rem) scale(0.96);
+  }
+}
+
+@keyframes toast-out {
+  to {
+    opacity: 0;
+    transform: translateY(-0.75rem) scale(0.97);
+  }
+}
+
+@keyframes toast-pop {
+  from {
+    transform: scale(0.4);
+  }
+}
+
+@keyframes toast-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes toast-life {
+  to {
+    transform: scaleX(0);
+  }
+}
+
+/* The bar keeps running for people who asked for less motion: it is the toast's clock. */
+@media (prefers-reduced-motion: reduce) {
+  .toast,
+  .toast.is-leaving,
+  .toast__icon {
+    animation-duration: 1ms;
+    animation-delay: 0ms;
+  }
+
+  .toast__draw {
+    stroke-dashoffset: 0;
+    animation: none;
+  }
+}
+
+@media print {
+  .toasts {
+    display: none;
+  }
+}
